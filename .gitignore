@@ -1,0 +1,19 @@
+# Local runtime state and secrets
+我的github-key-不要上传.md
+/*.md.bak
+/config.json
+/history.json
+/aichat-history.json
+/FyneApp.toml
+/lanscan-options.json
+/session-ses_*.md
+
+# Build output
+/dist/
+/fyne-cross/
+*.exe
+*.exe.*.bak
+
+# Local build output
+/发布/
+/文件树/

@@ -1,0 +1,14 @@
+[
+  {
+    "content": "待修改的代码：\n加一个开关，启用后只在 2D pose est 附近 x 米匹配",
+    "timestamp": "12:30:01"
+  },
+  {
+    "content": "修改方法：\n在 map_matcher 上方加 USE_LOCAL_MAP 开关",
+    "timestamp": "12:31:18"
+  },
+  {
+    "content": "其它要求：\n保留原 API，给出完整 diff",
+    "timestamp": "12:32:05"
+  }
+]

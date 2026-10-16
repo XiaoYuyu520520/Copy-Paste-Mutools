@@ -1,0 +1,3 @@
+// App icon resource. Compiled with windres into app_icon_windows_amd64.syso,
+// which the Go linker automatically merges into merger-native.exe.
+1 ICON "ico/default_icon.ico"

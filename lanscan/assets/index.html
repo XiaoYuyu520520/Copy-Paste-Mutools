@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LAN Scan · 局域网设备扫描</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◎</span>
+    <div>
+      <h1>LAN Scan</h1>
+      <p>局域网设备扫描工具</p>
+    </div>
+  </div>
+  <div class="status">
+    <span id="connState" class="dot dot-idle"></span>
+    <span id="connText">未连接</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel">
+    <h2>1. 选择网卡</h2>
+    <div class="row">
+      <select id="ifaceSelect" size="1"></select>
+      <button class="ghost" id="refreshIfaces" title="重新扫描网卡">⟳</button>
+    </div>
+    <div class="hint" id="ifaceHint">正在枚举本机网卡…</div>
+
+    <h2>2. 扫描范围</h2>
+    <div class="row">
+      <input id="cidrInput" type="text" placeholder="例如 192.168.1.0/24" />
+    </div>
+    <div class="quick">
+      <button class="chip" data-cidr="auto">使用所选网卡的子网</button>
+      <button class="chip" data-cidr="/24">/24 (256)</button>
+      <button class="chip" data-cidr="/25">/25 (128)</button>
+      <button class="chip" data-cidr="/26">/26 (64)</button>
+    </div>
+
+    <h2>3. 扫描选项</h2>
+    <div class="opts">
+<label class="switch-row"><span>ICMP 失败时回退到 TCP 探测</span><span class="switch"><input type="checkbox" id="optTcp"{{opt_tcp}} /><span class="slider"></span></span></label>
+      <label class="switch-row"><span>解析 MAC 地址</span><span class="switch"><input type="checkbox" id="optMac"{{opt_mac}} /><span class="slider"></span></span></label>
+      <label class="switch-row"><span>反查主机名</span><span class="switch"><input type="checkbox" id="optHost"{{opt_host}} /><span class="slider"></span></span></label>
+      <label class="switch-row"><span>SSH 模式（点击端口复制 ssh 命令）</span><span class="switch"><input type="checkbox" id="optSsh" /><span class="slider"></span></span></label>
+      <label>并发数 <input id="optWorkers" type="number" min="1" max="1024" value="{{opt_workers}}" /></label>
+      <label>超时 (ms) <input id="optTimeout" type="number" min="100" max="5000" value="{{opt_timeout}}" /></label>
+      <label>探测端口 <input id="optPorts" type="text" value="{{opt_ports}}" /></label>
+    </div>
+    <div class="opts-foot">
+      <span class="hint">参数会自动记住；修改 config.json 后重启生效。若仍显示旧值，点右侧按钮恢复。</span>
+      <button class="ghost" id="resetOptsBtn" type="button" title="清除记住的参数，恢复为 config.json 中的默认值">恢复配置默认</button>
+    </div>
+
+    <div class="actions">
+      <button id="startBtn" class="primary">开始扫描</button>
+      <button id="cancelBtn" class="danger" disabled>停止</button>
+      <button id="exportBtn" class="ghost" disabled>导出 CSV</button>
+    </div>
+  </section>
+
+  <section class="panel grow">
+    <div class="progress-wrap">
+      <div class="progress-info">
+        <strong id="progressText">等待扫描</strong>
+        <span id="progressCount" class="muted">0 / 0</span>
+      </div>
+      <div class="progress-bar"><div id="progressFill"></div></div>
+      <div class="progress-meta">
+        <span>在线: <b id="aliveCount">0</b></span>
+        <span>耗时: <b id="elapsed">0.0s</b></span>
+        <span id="currentCidr" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="hostsTable">
+        <thead>
+          <tr>
+            <th data-sort="ip">IP 地址</th>
+            <th data-sort="hostname">主机名</th>
+            <th data-sort="mac">MAC</th>
+            <th data-sort="latency">延迟</th>
+            <th data-sort="method">方式</th>
+            <th>开放端口</th>
+          </tr>
+        </thead>
+        <tbody id="hostsBody">
+          <tr class="empty"><td colspan="6">尚无结果</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
