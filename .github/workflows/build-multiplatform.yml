@@ -30,11 +30,21 @@ jobs:
           update: true
           install: mingw-w64-ucrt-x86_64-gcc
 
+      - name: Locate Go
+        id: go
+        shell: pwsh
+        run: |
+          $gobin = Split-Path (Get-Command go).Source
+          "gobin=$gobin" >> $env:GITHUB_OUTPUT
+          Write-Host "Go bin: $gobin"
+
       - name: Build
         shell: msys2 {0}
+        env:
+          GO_BIN_WIN: ${{ steps.go.outputs.gobin }}
         run: |
           set -e
-          export PATH="/c/Program Files/Go/bin:$PATH"
+          export PATH="$(cygpath -u "$GO_BIN_WIN"):$PATH"
           go version
           mkdir -p release
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -H windowsgui" \
