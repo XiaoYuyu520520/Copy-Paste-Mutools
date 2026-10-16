@@ -34,6 +34,8 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
+          export PATH="/c/Program Files/Go/bin:$PATH"
+          go version
           mkdir -p release
           CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -H windowsgui" \
             -o release/merger-native-windows-amd64.exe .
@@ -69,7 +71,9 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev \
+            libwayland-dev libwayland-client0 libxkbcommon-dev libxrandr-dev \
+            libxcursor-dev libxinerama-dev libxi-dev libxext-dev
 
       - name: Build and package
         run: |
