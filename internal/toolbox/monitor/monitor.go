@@ -95,6 +95,7 @@ type GPUSample struct {
 type Server struct {
 	opts Options
 	mux  *http.ServeMux
+	srv  *http.Server
 }
 
 // New 创建监视器服务。
@@ -113,6 +114,7 @@ func New(opts Options) *Server {
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux()}
 	s.routes()
+	s.srv = &http.Server{Addr: opts.Addr, Handler: s.mux}
 	return s
 }
 
@@ -135,7 +137,15 @@ func (s *Server) Handler() http.Handler { return s.mux }
 
 // ListenAndServe 启动服务并阻塞。
 func (s *Server) ListenAndServe() error {
-	return http.ListenAndServe(s.opts.Addr, s.mux)
+	return s.srv.ListenAndServe()
+}
+
+// Shutdown 关闭服务并释放端口。
+func (s *Server) Shutdown() error {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Close()
 }
 
 // handleStatus 返回一次性状态快照。

@@ -230,6 +230,9 @@ func ReverseLookup(ctx context.Context, ip string) string {
 
 // LookupMAC returns the MAC address for an IP from the OS ARP table.
 func LookupMAC(ip string) string {
+	if !MACExtractionSupported() {
+		return ""
+	}
 	switch runtime.GOOS {
 	case "windows":
 		return lookupMACWindows(ip)

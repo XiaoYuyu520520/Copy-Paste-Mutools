@@ -1,0 +1,130 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.25"
+  APP_ID: com.xiaoyuyu.promptmerger
+  APP_NAME: 提示词工具箱
+  APP_VERSION: "1.1.0"
+  APP_BUILD: "1"
+  # Fyne 2.8 对应的 NDK 版本（fyne 只依赖 NDK 做 cgo 交叉编译）
+  ANDROID_NDK_VERSION: "26.1.10909125"
+  ANDROID_PLATFORM: "34"
+  ANDROID_BUILD_TOOLS: "34.0.0"
+
+jobs:
+  apk:
+    name: Build APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Fyne 的 Android 打包会调用 d8 / aapt2，需要 JDK（17 与新的 build-tools 兼容）
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${ANDROID_PLATFORM}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Export Android env
+        run: |
+          set -euo pipefail
+          # fyne 通过 ANDROID_NDK_HOME / ANDROID_HOME 定位工具链
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      # 版本号从 tag 推导：v1.1.0 -> 1.1.0；主线提交用默认值
+      - name: Resolve version
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF#refs/tags/v}"
+            echo "APP_VERSION=$ver" >> "$GITHUB_ENV"
+            echo "APP_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            echo "版本来自 tag: $ver (build ${GITHUB_RUN_NUMBER})"
+          else
+            echo "APP_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install fyne CLI
+        run: go install fyne.io/fyne/v2/cmd/fyne@v2.8.0
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          # 只出 arm64：2020 年后发布的 Android 手机基本全是 arm64，
+          # 单架构能把构建时间与产物体积都减半。
+          fyne package \
+            -os android/arm64 \
+            -src ./cmd/android \
+            -app-id "$APP_ID" \
+            -name "$APP_NAME" \
+            -icon ico/icon.png \
+            -app-version "$APP_VERSION" \
+            -app-build "$APP_BUILD"
+
+      - name: Show artifact
+        run: |
+          set -euo pipefail
+          ls -lh *.apk
+          # 记录 SHA256，方便下载后校验
+          sha256sum *.apk | tee SHA256SUMS-android.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-merger-toolbox-android-arm64
+          path: |
+            *.apk
+            SHA256SUMS-android.txt
+          if-no-files-found: error
+
+      # tag 推送时把 APK 附到同名 Release（release.yml 已先创建 Release）
+      - name: Attach APK to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          # 等 release.yml 把 Release 建出来（最多 10 分钟）
+          for i in $(seq 1 60); do
+            if gh release view "$tag" >/dev/null 2>&1; then break; fi
+            sleep 10
+          done
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" ./*.apk ./SHA256SUMS-android.txt --clobber
+          else
+            echo "::warning::Release $tag 尚未创建，APK 只保留在 workflow artifact"
+          fi

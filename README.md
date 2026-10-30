@@ -25,6 +25,7 @@
 | 🔀 **Python → Go 迁移对照表** | [docs/迁移对照表.md](docs/迁移对照表.md) |
 | 🏗️ **构建与发布** | [docs/构建发布.md](docs/构建发布.md) |
 | 🧭 **项目结构** | [docs/项目结构.md](docs/项目结构.md) |
+| 📱 **Android App** | [docs/安卓方案.md](docs/安卓方案.md) |
 | 📜 **历史教程（备忘）** | [docs/tutorials/](docs/tutorials/) |
 | 🦊 **ROS2 相关** | [docs/ros2/](docs/ros2/) |
 | 🗂️ **旧版 Python 源码（归档）** | [legacy/python/](legacy/python/) |
@@ -73,6 +74,20 @@
 | --- | --- | --- |
 | `paint` | 简易画板（自由笔画 / 选色 / 调粗细 / 导出 PNG） | `最终优化版画板.py`（tkinter） |
 
+### 3. `android` — 手机端 App
+
+同一个代码库的 Android 版本（底部 5 个导航页）。只保留手机上真正可用的功能：
+
+| 页 | 功能 | 说明 |
+| --- | --- | --- |
+| 编辑 | 提示词 + 语句合并 | 多标签、实时预览、一键复制 |
+| 聊天 | AI 对话 | 流式输出，配置 OpenAI 兼容接口 |
+| 扫描 | 局域网扫描 | Android 无 ICMP 权限，**强制 TCP 探测** |
+| 画板 | 手指绘画 | 复用桌面版画板控件，支持导出 PNG |
+| 更多 | AI 设置 / 本地服务 / 系统信息 | 文件共享、性能监视、网速测试 |
+
+桌面端独有的「模拟键盘输入 / USB 枚举 / 桌面快捷方式 / 磁盘基准」在手机上不提供。
+
 ---
 
 ## 🚀 快速开始
@@ -86,6 +101,10 @@
 | Windows x64 | `merger-windows-amd64.zip`、`toolbox-windows-amd64.zip`、`paint-windows-amd64.zip` |
 | Ubuntu x86_64 | `merger-linux-amd64.tar.gz`、`toolbox-linux-amd64.tar.gz`、`paint-linux-amd64.tar.gz` |
 | Ubuntu ARM64 | `merger-linux-arm64.tar.gz`、`toolbox-linux-arm64.tar.gz`、`paint-linux-arm64.tar.gz` |
+| **Android (arm64-v8a)** | `提示词工具箱.apk`（Debug 签名，直接安装） |
+
+> Android 版由独立的 [`android.yml`](.github/workflows/android.yml) 工作流构建，
+> 每次合并到 `main` 都会产出 APK artifact。详见 [docs/安卓方案.md](docs/安卓方案.md)。
 
 ### 自己编译
 

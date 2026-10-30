@@ -293,12 +293,15 @@ func (s *Scanner) probeLiveness(ctx context.Context, ip string) Host {
 		return h
 	}
 
-	lat, err := SystemPing(ctx, ip, s.opts.PingTimeout)
-	if err == nil {
-		h.Alive = true
-		h.LatencyMs = lat.Milliseconds()
-		h.Method = MethodICMP
-		return h
+	// Android 没有可用的 ping 命令，直接走 TCP 探测，省掉一次必然失败的 exec。
+	if ICMPProbeSupported() {
+		lat, err := SystemPing(ctx, ip, s.opts.PingTimeout)
+		if err == nil {
+			h.Alive = true
+			h.LatencyMs = lat.Milliseconds()
+			h.Method = MethodICMP
+			return h
+		}
 	}
 
 	if s.opts.UseTCPProbe {
