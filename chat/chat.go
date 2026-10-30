@@ -16,6 +16,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"prompt-merger-native/internal/privatefile"
 )
 
 // Settings 一次请求需要的上游配置。
@@ -70,7 +72,7 @@ func historySave(raw []byte) error {
 	if histStore.path == "" {
 		return nil
 	}
-	return os.WriteFile(histStore.path, raw, 0o644)
+	return privatefile.Write(histStore.path, raw)
 }
 
 // New 构造聊天服务路由。

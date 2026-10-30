@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"prompt-merger-native/internal/privatefile"
 )
 
 // Item 与 merger.go 保持一致，本文件复用。
@@ -164,5 +166,5 @@ func SaveConfig(c Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigPath(), buf, 0644)
+	return privatefile.Write(ConfigPath(), buf)
 }
