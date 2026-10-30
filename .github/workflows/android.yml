@@ -43,13 +43,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # setup-android 自己会先跑一次 sdkmanager --licenses 来探测版本，
+      # 那一步会因为没接受协议而失败。所以这里先手动接受许可，
+      # 再让 setup-android 安装它需要的组件。
+      - name: Accept Android SDK licenses
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          echo "licenses accepted"
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "12266719"
 
       - name: Install SDK components
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses > /dev/null || true
           sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_PLATFORM}" \
