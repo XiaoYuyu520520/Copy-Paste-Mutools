@@ -40,6 +40,12 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
+          # setup-go 装的是 Windows 版 Go，MSYS2 的 bash 里默认看不到，
+          # 用 where.exe 找到 go.exe，再用 cygpath 转成 MSYS2 路径加进 PATH。
+          GO_EXE=$(where.exe go | head -1)
+          GO_BIN=$(cygpath -u "$(dirname "$GO_EXE")")
+          export PATH="$PATH:$GO_BIN"
+          go version
           export CGO_ENABLED=1
           mkdir -p release
           go build -trimpath -ldflags="-s -w -H windowsgui" -o release/merger.exe  ./cmd/merger
