@@ -71,29 +71,28 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # path-type: inherit 才会把 MSYS2 的 bin 目录写进后续步骤的 PATH。
+      # 默认的 strict 只给 msys2 shell 用，PowerShell 里看不到 gcc。
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
           install: mingw-w64-ucrt-x86_64-gcc
+          path-type: inherit
 
       - name: Build all programs
-        shell: msys2 {0}
+        shell: pwsh
         run: |
-          set -e
-          # setup-go 装的是 Windows 版 Go，MSYS2 的 bash 里默认看不到，
-          # 用 where.exe 找到 go.exe，再用 cygpath 转成 MSYS2 路径加进 PATH。
-          GO_EXE=$(where.exe go | head -1)
-          GO_BIN=$(cygpath -u "$(dirname "$GO_EXE")")
-          export PATH="$PATH:$GO_BIN"
+          $ErrorActionPreference = "Stop"
+          $env:CGO_ENABLED = "1"
+          gcc --version | Select-Object -First 1
           go version
-          export CGO_ENABLED=1
-          mkdir -p /tmp/out
-          go build -trimpath -o /tmp/out/merger.exe  ./cmd/merger
-          go build -trimpath -o /tmp/out/toolbox.exe ./cmd/toolbox
-          go build -trimpath -o /tmp/out/paint.exe   ./cmd/paint
-          ls -lh /tmp/out
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          go build -trimpath -o out/merger.exe  ./cmd/merger
+          go build -trimpath -o out/toolbox.exe ./cmd/toolbox
+          go build -trimpath -o out/paint.exe   ./cmd/paint
+          Get-ChildItem out
 
   # ---------------------------------------------------------------------------
   # toolbox 是纯 Go（不依赖 cgo），可以交叉编译到所有目标平台做冒烟测试
