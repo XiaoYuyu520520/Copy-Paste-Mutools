@@ -100,14 +100,16 @@ jobs:
           set -euo pipefail
           # 只出 arm64：2020 年后发布的 Android 手机基本全是 arm64，
           # 单架构能把构建时间与产物体积都减半。
+          # 注意：fyne v2 自带的 CLI 用驼峰风格参数（-appID / -appVersion / -appBuild），
+          # 不是新工具 fyne.io/tools 的 -app-id / -app-version。
           fyne package \
             -os android/arm64 \
             -src ./cmd/android \
-            -app-id "$APP_ID" \
+            -appID "$APP_ID" \
             -name "$APP_NAME" \
             -icon ico/icon.png \
-            -app-version "$APP_VERSION" \
-            -app-build "$APP_BUILD"
+            -appVersion "$APP_VERSION" \
+            -appBuild "$APP_BUILD"
 
       - name: Show artifact
         run: |
