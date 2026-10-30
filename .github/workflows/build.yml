@@ -14,8 +14,11 @@ env:
   GO_VERSION: "1.25"
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 静态检查 + 单元测试 + 格式检查
+  # ---------------------------------------------------------------------------
   check:
-    name: Vet & Test
+    name: Vet, Test & Format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,6 +30,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # Fyne 通过 cgo 依赖 OpenGL / X11 / Wayland 头文件，
+      # 没有这些依赖时 go vet ./... 会在编译 GUI 包时失败。
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc libc6-dev \
+            libgl1-mesa-dev xorg-dev \
+            libwayland-dev libxkbcommon-dev
+
       - name: go vet
         run: go vet ./...
 
@@ -37,33 +50,17 @@ jobs:
         run: |
           unformatted=$(gofmt -l ./cmd ./internal)
           if [ -n "$unformatted" ]; then
-            echo "以下文件未格式化，请运行 gofmt -w："
+            echo "::error::以下文件未格式化，请运行 gofmt -w："
             echo "$unformatted"
             exit 1
           fi
 
-  cross-compile:
-    name: Cross compile (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            runner: ubuntu-latest
-          - os: linux
-            arch: arm64
-            runner: ubuntu-latest
-          - os: windows
-            arch: amd64
-            runner: windows-latest
-          - os: darwin
-            arch: amd64
-            runner: macos-15-intel
-          - os: darwin
-            arch: arm64
-            runner: macos-15
+  # ---------------------------------------------------------------------------
+  # Windows 原生编译（Fyne 需要 MinGW，因此用 MSYS2）
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows build
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,27 +71,56 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      # toolbox 不依赖 cgo，可直接交叉编译。
-      # merger / paint 依赖 Fyne→OpenGL，必须带 cgo，
-      # 只能在对应平台的原生 runner 上构建，因此这里只做类型检查，
-      # 真实构建交给 release.yml 的三个原生 runner。
-      - name: Cross compile toolbox
-        shell: bash
-        run: |
-          set -euo pipefail
-          export GOOS=${{ matrix.os }}
-          export GOARCH=${{ matrix.arch }}
-          export CGO_ENABLED=0
-          mkdir -p /tmp/cross
-          go build -o /tmp/cross/toolbox ./cmd/toolbox
-          ls -lh /tmp/cross
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
 
-      - name: Type-check GUI programs (need cgo, cannot cross compile)
-        shell: bash
+      - name: Build all programs
+        shell: msys2 {0}
+        run: |
+          set -e
+          export CGO_ENABLED=1
+          mkdir -p /tmp/out
+          go build -trimpath -o /tmp/out/merger.exe  ./cmd/merger
+          go build -trimpath -o /tmp/out/toolbox.exe ./cmd/toolbox
+          go build -trimpath -o /tmp/out/paint.exe   ./cmd/paint
+          ls -lh /tmp/out
+
+  # ---------------------------------------------------------------------------
+  # toolbox 是纯 Go（不依赖 cgo），可以交叉编译到所有目标平台做冒烟测试
+  # ---------------------------------------------------------------------------
+  cross-toolbox:
+    name: Cross compile toolbox (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux,   arch: amd64 }
+          - { os: linux,   arch: arm64 }
+          - { os: windows, arch: amd64 }
+          - { os: darwin,  arch: amd64 }
+          - { os: darwin,  arch: arm64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          export GOOS=${{ matrix.os }}
-          export GOARCH=${{ matrix.arch }}
-          export CGO_ENABLED=1
-          # 没有交叉编译工具链时跳过；这些程序由 release.yml 原生构建。
-          go vet ./cmd/merger ./cmd/paint || echo "::notice::GUI 程序需要 cgo 交叉工具链，已跳过（由 release.yml 原生构建）"
+          mkdir -p /tmp/out
+          go build -trimpath -o /tmp/out/toolbox ./cmd/toolbox
+          ls -lh /tmp/out
