@@ -43,36 +43,41 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # setup-android 自己会先跑一次 sdkmanager --licenses 来探测版本，
-      # 那一步会因为没接受协议而失败。所以这里先手动接受许可，
-      # 再让 setup-android 安装它需要的组件。
-      - name: Accept Android SDK licenses
+      # GitHub 的 ubuntu-latest 镜像自带 Android SDK（/usr/local/lib/android/sdk）。
+      # 不用 android-actions/setup-android：它会去装已废弃的 "tools" 包，
+      # 在 24.04 镜像上直接 exit code 1。直接用镜像里的 sdkmanager 更稳。
+      - name: Configure Android SDK env
         run: |
           set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          if [ ! -d "$SDK_ROOT" ]; then
+            echo "::error::找不到 Android SDK（$SDK_ROOT）"
+            exit 1
+          fi
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "SDK: $SDK_ROOT"
+
+      - name: Accept licenses and install components
+        run: |
+          set -euo pipefail
+          sdkmanager --version
           yes | sdkmanager --licenses > /dev/null || true
-          echo "licenses accepted"
+          sdkmanager "platform-tools" "platforms;android-${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: "12266719"
-
-      - name: Install SDK components
+      - name: Export NDK env
         run: |
           set -euo pipefail
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_PLATFORM}" \
-            "build-tools;${ANDROID_BUILD_TOOLS}" \
-            "ndk;${ANDROID_NDK_VERSION}"
-
-      - name: Export Android env
-        run: |
-          set -euo pipefail
-          # fyne 通过 ANDROID_NDK_HOME / ANDROID_HOME 定位工具链
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          ndk="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION"
+          if [ ! -d "$ndk" ]; then
+            echo "::error::NDK 未安装：$ndk"
+            exit 1
+          fi
+          # fyne 通过 ANDROID_NDK_HOME 定位工具链
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "NDK: $ndk"
 
       # 版本号从 tag 推导：v1.1.0 -> 1.1.0；主线提交用默认值
       - name: Resolve version
