@@ -102,12 +102,13 @@ jobs:
           # 单架构能把构建时间与产物体积都减半。
           # 注意：fyne v2 自带的 CLI 用驼峰风格参数（-appID / -appVersion / -appBuild），
           # 不是新工具 fyne.io/tools 的 -app-id / -app-version。
+          # -icon 的路径相对于 -src 指定的包目录，而不是仓库根目录。
           fyne package \
             -os android/arm64 \
             -src ./cmd/android \
             -appID "$APP_ID" \
             -name "$APP_NAME" \
-            -icon ico/icon.png \
+            -icon ../../ico/icon.png \
             -appVersion "$APP_VERSION" \
             -appBuild "$APP_BUILD"
 
