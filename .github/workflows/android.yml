@@ -112,11 +112,26 @@ jobs:
             -appVersion "$APP_VERSION" \
             -appBuild "$APP_BUILD"
 
-      - name: Show artifact
+      - name: Collect APK
         run: |
           set -euo pipefail
-          ls -lh *.apk
-          # 记录 SHA256，方便下载后校验
+          # fyne 可能把 APK 放在包目录（cmd/android）或仓库根目录，
+          # 两种情况都收进来，统一放到根目录的 dist/ 下。
+          mkdir -p dist
+          found=0
+          while IFS= read -r -d '' apk; do
+            cp "$apk" dist/
+            found=1
+            echo "收集到 $apk"
+          done < <(find . -name '*.apk' -not -path './dist/*' -print0)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::没有找到 APK，列出工作目录排查："
+            ls -la
+            find . -name '*.apk' -o -name '*.aab' | head
+            exit 1
+          fi
+          ls -lh dist
+          cd dist
           sha256sum *.apk | tee SHA256SUMS-android.txt
 
       - name: Upload APK
@@ -124,8 +139,8 @@ jobs:
         with:
           name: prompt-merger-toolbox-android-arm64
           path: |
-            *.apk
-            SHA256SUMS-android.txt
+            dist/*.apk
+            dist/SHA256SUMS-android.txt
           if-no-files-found: error
 
       # tag 推送时把 APK 附到同名 Release（release.yml 已先创建 Release）
@@ -142,7 +157,7 @@ jobs:
             sleep 10
           done
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" ./*.apk ./SHA256SUMS-android.txt --clobber
+            gh release upload "$tag" dist/*.apk dist/SHA256SUMS-android.txt --clobber
           else
             echo "::warning::Release $tag 尚未创建，APK 只保留在 workflow artifact"
           fi
