@@ -1,0 +1,9 @@
+# 服务器配置
+server:
+  host: "0.0.0.0"
+  port: 8005
+
+# 文件共享配置
+files:
+  # 注意这里的双反斜杠
+  shared_directory: "S:\\SHARE\\study"

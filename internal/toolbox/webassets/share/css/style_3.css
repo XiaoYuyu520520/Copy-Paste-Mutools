@@ -1,0 +1,163 @@
+/* --- 基础变量和全局样式 --- */
+:root {
+    --primary-color: #007bff;
+    --background-color: #f8f9fa;
+    --text-color: #333;
+    --border-color: #dee2e6;
+    --hover-bg-color: #e9ecef;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    margin: 0;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.5;
+}
+
+/* --- 主要布局容器 --- */
+.container {
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+header {
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+
+h1 {
+    margin: 0;
+    font-size: 1.8em;
+    color: var(--primary-color);
+}
+
+#breadcrumb {
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: #6c757d;
+}
+
+#breadcrumb a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+#breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+#breadcrumb span {
+    margin: 0 5px;
+}
+
+/* --- 新增操作栏样式 --- */
+.action-bar {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f0f8ff;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.action-bar.hidden {
+    display: none;
+}
+
+#batch-download-btn {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+#batch-download-btn:hover {
+    opacity: 0.9;
+}
+
+/* --- 文件列表核心样式 (包含复选框) --- */
+.file-item {
+    display: flex; /* 使用 Flexbox 布局 */
+    align-items: center; /* 垂直居中对齐 */
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+}
+
+.file-item:last-child {
+    border-bottom: none;
+}
+
+.file-item:hover {
+    background-color: var(--hover-bg-color);
+}
+
+/* 选中状态样式 */
+.file-item.selected {
+    background-color: #e6f7ff;
+}
+
+/* 复选框样式 */
+.file-item .checkbox {
+    margin-right: 15px;
+    flex-shrink: 0; /* 防止复选框被压缩 */
+}
+
+.file-item .icon {
+    width: 24px;
+    height: 24px;
+    margin-right: 10px;
+    flex-shrink: 0; /* 防止图标被压缩 */
+}
+
+/* 文件/文件夹名称链接 */
+.file-item .name-link {
+    flex-grow: 1; /* 占据所有剩余空间 */
+    word-break: break-all; /* 防止长文件名撑破布局 */
+    cursor: pointer;
+    color: inherit;
+    text-decoration: none;
+}
+
+/* 下载按钮样式 */
+.file-item .download-btn {
+    margin-left: 20px; /* 与左侧文件名保持距离 */
+    padding: 5px 10px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 1.2em; /* 让图标稍大一些，更容易点击 */
+    line-height: 1; /* 确保图标垂直居中 */
+    transition: background-color 0.2s ease;
+    flex-shrink: 0; /* 防止按钮被压缩 */
+}
+
+.file-item .download-btn:hover {
+    background-color: #dcdcdc; /* 添加悬停效果 */
+}
+
+
+/* --- 其他辅助样式 --- */
+footer {
+    text-align: center;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.8em;
+    color: #6c757d;
+}
+
+.loading {
+    padding: 20px;
+    text-align: center;
+    color: #6c757d;
+}
+    

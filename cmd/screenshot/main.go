@@ -13,8 +13,8 @@ import (
 	"fyne.io/fyne/v2/driver/software"
 	"fyne.io/fyne/v2/test"
 
-	"prompt-merger-native/data"
-	"prompt-merger-native/ui"
+	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/data"
+	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/ui"
 )
 
 func snap(name string, cfg data.Config, outDir string, w, h int) error {

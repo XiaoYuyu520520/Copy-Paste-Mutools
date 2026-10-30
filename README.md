@@ -1,178 +1,197 @@
-# 提示词+语句自动合并工具 · Pro (Native)
+<div align="center">
 
-基于原 Web 版的 Go + [Fyne](https://fyne.io) 原生桌面重写版。无浏览器内核、纯原生窗口、支持**浏览器风格多标签**，开箱即用，性能与可移植性更强。
+# 提示词复合工具箱 · Copy-Paste-Mutools
 
-## 主要差异（vs 原 Web 版）
+**多合一桌面工具箱**：提示词合并、局域网扫描、网速测试、文件共享、性能监视、系统信息、画板……
 
-| 项目 | 原 Web 版 | Native 版 |
-|---|---|---|
-| UI 载体 | 系统浏览器 | 原生窗口（Fyne + OpenGL） |
-| 多标签 | ❌ 单视图 | ✅ 顶部自定义标签栏，可任意增删 |
-| 主题 | 仅亮色 | 亮/暗一键切换，记忆到配置 |
-| 配置格式 | `prompts`/`sentences` | `tabs[]`，自动兼容旧格式 |
-| 部署 | 浏览器打开 `127.0.0.1:随机端口` | 单个 `.exe`，双击即用 |
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Fyne](https://img.shields.io/badge/Fyne-v2.8-8F4FFF?logo=appveyor&logoColor=white)](https://fyne.io/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-blue?logo=github)](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases)
+[![Pages](https://img.shields.io/badge/Docs-GitHub%20Pages-success?logo=github)](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/)
 
-## 功能
+</div>
 
-- **主界面布局**：左侧竖向「页面」导航（替代原历史侧栏）在**编辑器 / 模拟键盘输入 / 文件夹 Tree / AI 设置**之间切换；底部状态栏左侧是「⚙ 配置」菜单 + 状态文本，右侧是「AI 聊天」「Markdown」「LAN」三个图标按钮 + 标签数
-- **多标签**：编辑器顶部标签栏右侧 `+` 新增，单击标签切换，`×` 关闭（最后一个标签的 `×` 退化为「清空此标签」）
-- **每标签 5 行**：`提示词` / `语句` 两个多行文本框 + 两个独立复选框，文本/勾选实时联动合并
-- **合并预览**：底部只读多行框实时显示结果，去抖 200 ms
-- **去抖落盘**：编辑停顿 1.5 s 自动写 `config.json`，关闭窗口时同步落盘
-- **模拟键盘输入**：独立页面，一键把任意标签的合并结果逐字「真实键入」到目标程序（绕过粘贴检测）。支持启动延迟 / 字符间隔 / 重复次数、实时进度与停止；**Enter 可屏蔽或替换为 Ctrl+Enter / 空格**，防止把换行直接发出去误触「发送」
-- **文件夹 Tree**：独立页面，选择一个文件夹后按类 `tree` 缩进输出目录结构。可勾选屏蔽隐藏项（`.git` 等）与常见构建/依赖目录（`build`、`node_modules`…），并支持**添加要屏蔽的文件夹名**与**匹配关键词**（名称含即整棵忽略），结果一键复制
-- **Markdown 渲染**：底部一个按钮即在本机**随机空闲端口**起本地服务并打开系统浏览器。页面为浏览器自含工具：左侧**粘贴 Markdown** 或**打开本地 .md/.txt**，右侧用内嵌 marked + highlight.js **实时 GitHub 风格预览**（代码高亮 + 复制，完全离线）；打开 `.pgm(+.yaml)` 则识别为 **2D 激光 SLAM 地图**，浏览器内提供**比例尺 / 测量尺子 / 障碍物擦除橡皮**，修改后可**保存下载** .pgm/.yaml；程序退出自动释放端口
-- **局域网设备扫描**：底部一个按钮即在本机**随机空闲端口**起本地服务并自动用系统浏览器打开（复用独立「LAN Scan」的 Web 界面与探测逻辑），再次点击只重开浏览器。自动枚举网卡与子网、CIDR 快捷 /24-/26、并发/超时/端口可调；系统 ping（ICMP 被拦自动回退 TCP）+ 主机名 / MAC / 开放端口，表格**实时刷新**、支持**导出 CSV**；程序退出或关窗自动取消扫描并释放端口
-- **AI 设置**：左侧页面栏新增「AI 设置」页——配置 OpenAI 兼容接口的 **API 地址 / API Key / 模型 / 系统提示词**，保存进 `config.json`（页面形态参考 RikkaHub 的提供商/模型设置思路）
-- **AI 聊天（局域网）**：底部「AI 聊天」一个按钮即在本机随机空闲端口起服务并自动用系统浏览器打开。页面为浏览器自含对话（**布局/交互参考 RikkaHub Web UI**）：左侧会话列表（新建/切换/删除，本机 localStorage）、顶部模型下拉（自动读取上游 `/models`）、消息气泡 + **Markdown 渲染（代码高亮/复制）**、重新生成/复制、底部输入框（Enter 发送、Shift+Enter 换行、停止生成）；走 **OpenAI 兼容 `/chat/completions` 流式(SSE)**，可接 OpenAI / DeepSeek / Qwen / Moonshot / 本地 Ollama·LM Studio 等；程序退出自动释放端口
-- **亮/暗主题**：左下角「⚙ 配置」菜单一键切换，记忆到配置
-- **界面风格**：JetBrains / VSCode 取向的暗色 IDE 外观——深墨蓝底（#1E2333）、#2C3247 控件底、#3A96FF 强调色、#E1E4EB 柔和文本；左侧导航选中项为圆角渐变卡片，标签栏为 2 px 蓝色下划线，文本域等宽字体 + 4 px 圆角
-- **配置迁移**：自动检测旧版 `prompts`/`sentences` 结构并迁移成单标签
+---
 
-## 合并规则（与原版一致）
+## 📖 文档导航
 
-对每一行（i = 0..4）：
+| 想看什么 | 入口 |
+| --- | --- |
+| 📘 **完整文档站** | **[docs/index.md](docs/index.md)** · [在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/) |
+| 🚀 **快速上手（5 分钟）** | [docs/快速上手.md](docs/快速上手.md) |
+| 🧰 **工具箱命令手册** | [docs/工具箱.md](docs/工具箱.md) |
+| 🖥️ **桌面应用说明** | [docs/桌面应用.md](docs/桌面应用.md) |
+| 🔀 **Python → Go 迁移对照表** | [docs/迁移对照表.md](docs/迁移对照表.md) |
+| 🏗️ **构建与发布** | [docs/构建发布.md](docs/构建发布.md) |
+| 🧭 **项目结构** | [docs/项目结构.md](docs/项目结构.md) |
+| 📜 **历史教程（备忘）** | [docs/tutorials/](docs/tutorials/) |
+| 🦊 **ROS2 相关** | [docs/ros2/](docs/ros2/) |
+| 🗂️ **旧版 Python 源码（归档）** | [legacy/python/](legacy/python/) |
 
-| 提示词 | 语句 | 输出片段 |
-|---|---|---|
-| 启用且非空 | 启用且非空 | `提示词：\n语句` |
-| 启用且非空 | 关闭或空 | `提示词` |
-| 关闭或空 | 启用且非空 | `语句` |
-| 关闭或空 | 关闭或空 | 跳过 |
+---
 
-最后把所有片段用 `，\n` 连接，末尾追加 `。`。
+## 📦 这个仓库里有什么
 
-## 项目结构
+本仓库是一个 **Go 多模块工程**，包含两个可执行程序：
 
-```
-提示词v2-native/
-├── main.go                // 入口
-├── app.rc                 // Windows 图标资源脚本（windres 使用）
-├── app_icon_windows_amd64.syso // 由 default_icon.ico 生成的资源对象，go build 自动链接
-├── ico/                   // 应用图标源文件
-├── data/                  // 纯逻辑层（可单元测试）
-│   ├── merger.go          // 合并规则
-│   ├── merger_test.go     // 单元测试
-│   ├── config.go          // 配置读写 + 旧格式迁移
-│   ├── history.go         // 历史记录读写（遗留：新版 UI 已移除历史栏）
-│   ├── tree.go            // 文件夹 tree 生成 + 屏蔽规则
-│   └── tree_test.go       // 单元测试
-├── render/                // 浏览器渲染服务（纯逻辑层，可单元测试）
-│   ├── pgm.go             // PGM(P2/P5) 解析、yaml 元数据解析
-│   ├── server.go          // 随机空闲端口监听 / 释放 / 打开系统浏览器
-│   ├── markdown.go        // Markdown 页（内嵌 marked + highlight.js）
-│   ├── mapview.go         // 2D SLAM 地图页（比例尺/测量/橡皮/下载）
-│   ├── mdeditor.go        // 浏览器自含 Markdown/地图输入页 + /api/map 上传
-│   ├── embed.go           // go:embed 内嵌前端静态资源
-│   ├── render_test.go     // 单元测试
-│   └── mdeditor_test.go   // 单元测试
-├── netscan/               // 局域网扫描探测（改编自 MIT LAN Scan，纯标准库）
-│   ├── scanner.go         // 并发扫描编排 + CIDR 展开
-│   ├── ping.go            // 系统 ping / TCP 探测 / MAC / 反向 DNS
-│   ├── interfaces.go      // 网卡与子网枚举
-│   ├── doc.go             // 包说明与出处声明
-│   └── scan_test.go       // 单元测试
-├── lanscan/               // 浏览器版局域网扫描服务（复用 LAN Scan Web UI）
-│   ├── embed.go           // go:embed 内嵌浏览器页面资源
-│   ├── server.go          // HTTP / SSE 路由 + 扫描会话管理
-│   ├── server_test.go     // 单元测试
-│   └── assets/            // index.html / style.css / app.js
-├── chat/                  // 浏览器版 AI 聊天（OpenAI 兼容流式）
-│   ├── chat.go            // /api/config · /api/models · /api/chat(SSE 转发)
-│   ├── page.go            // 对话页（参考 RikkaHub UI：会话列表/消息流/输入）
-│   └── chat_test.go       // 单元测试
-├── ui/                    // UI 层
-│   ├── app.go             // 主窗口 + 左侧页面切换 + 多标签编排
-│   ├── editor.go          // 单标签编辑器（5 行 + 预览 + 按钮）
-│   ├── tabbar.go          // 自定义标签栏（Fyne 未公开 closable API，自己实现）
-│   ├── leftrail.go        // 左侧竖向页面导航（替代原历史侧栏）
-│   ├── browser_tools.go   // AI 聊天 / 局域网扫描 / Markdown 渲染的浏览器服务生命周期
-│   ├── aisettings.go      // AI 设置页（API 地址/Key/模型/系统提示）
-│   ├── theme.go           // 亮/暗自定义主题
-│   ├── paste.go           // 标签填充小工具
-│   ├── simpanel.go        // 模拟键盘输入独立页面
-│   ├── simtype.go         // 按键序列规划（Enter 屏蔽 / 替换 Ctrl+Enter / 空格）
-│   ├── simtype_windows.go // Windows SendInput 底层（Unicode 逐字键入）
-│   ├── simtype_other.go   // 非 Windows 占位实现
-│   ├── treepanel.go       // 文件夹 Tree 独立页面（屏蔽过滤设置 + 结果）
-│   ├── treepanel_demo.go  // Tree 页截图演示入口
-│   ├── simpanel_demo.go   // 模拟输入页截图演示入口
-│   └── layout.go          // fixedHeightLayout：多行框最小高度裁剪布局
-└── go.mod / go.sum
-```
+### 1. `merger` — 提示词 + 语句自动合并（桌面应用）
 
-## 编译运行
+基于 Go + [Fyne](https://fyne.io) 的原生桌面程序，无浏览器内核。
+
+- **多标签**：顶部标签栏可任意增删，每个标签独立保存提示词 / 语句
+- **实时合并**：勾选与文本即时联动，底部只读框实时预览结果（200 ms 去抖）
+- **模拟键盘输入**：把合并结果逐字「真实键入」到目标程序，绕过粘贴检测
+- **文件夹树**：按 `tree` 风格输出目录结构，可屏蔽构建/依赖目录
+- **Markdown 渲染**：本地起服务 + 系统浏览器打开，GitHub 风格实时预览、代码高亮
+- **2D 激光地图**：打开 `.pgm + .yaml` 即进入地图查看器（比例尺 / 测量 / 橡皮）
+- **局域网扫描**：自动枚举网卡与子网，ICMP + TCP 回退，表格实时刷新、导出 CSV
+- **AI 聊天**：OpenAI 兼容 `/chat/completions` 流式对话，可接 OpenAI / DeepSeek / Qwen / Ollama
+- **亮/暗主题**：一键切换并记忆
+
+### 2. `toolbox` — 统一命令行工具箱
+
+一个 exe 承载全部小工具，避免「一个工具一个 exe」的碎片化。
+
+| 子命令 | 功能 | 迁移自 |
+| --- | --- | --- |
+| `tree` | 打印目录树（自动忽略构建/依赖目录） | `文件树/file_tree.py`、`tree_交互式输入路径.py` |
+| `cpubench` | CPU 单核性能基准测试 | `CPU 单核基准测试脚本.py` |
+| `diskbench` | 磁盘顺序读写吞吐测试 | `磁盘 IO 速度测试.py` |
+| `diskm` | 实时磁盘 I/O 吞吐监控 | `磁盘工具/disk_monitor.py` |
+| `netscan` | 局域网设备扫描（ICMP/TCP/MAC/主机名） | `network_windows.py`、`network_linux_v2.py`、`wlan_scan/` |
+| `sysinfo` | 系统硬件与资源信息（支持 `--json`） | `读取设备信息.py` |
+| `shortcut` | 生成桌面网址快捷方式 | `桌面网址快捷方式生成器.py` |
+| `usb` | 列出 USB 设备（可导出 Markdown 快照） | `USB_scan/main.py` |
+| `share` | 局域网文件共享服务（浏览器访问） | `lan-share-server/`（FastAPI） |
+| `monitor` | 开发板性能监视器（SSE 实时推送） | `Linux开发板性能监视器/`（Flask） |
+| `netspeed` | 局域网网速测试服务 | `局域网测速工具/`（本就是 Go，已并入主模块） |
+
+另有独立 GUI 程序：
+
+| 程序 | 功能 | 迁移自 |
+| --- | --- | --- |
+| `paint` | 简易画板（自由笔画 / 选色 / 调粗细 / 导出 PNG） | `最终优化版画板.py`（tkinter） |
+
+---
+
+## 🚀 快速开始
+
+### 下载即用
+
+前往 [**Releases**](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases) 下载对应平台压缩包，解压后双击运行。
+
+| 平台 | 产物 |
+| --- | --- |
+| Windows x64 | `merger-windows-amd64.zip`、`toolbox-windows-amd64.zip`、`paint-windows-amd64.zip` |
+| Ubuntu x86_64 | `merger-linux-amd64.tar.gz`、`toolbox-linux-amd64.tar.gz`、`paint-linux-amd64.tar.gz` |
+| Ubuntu ARM64 | `merger-linux-arm64.tar.gz`、`toolbox-linux-arm64.tar.gz`、`paint-linux-arm64.tar.gz` |
+
+### 自己编译
 
 ```bash
-# 拉依赖
-go mod tidy
+git clone https://github.com/XiaoYuyu520520/Copy-Paste-Mutools.git
+cd Copy-Paste-Mutools
 
-# （可选）打包 exe 图标：先由 ico/default_icon.ico 生成资源对象
-# windres -J rc -O coff -o app_icon_windows_amd64.syso app.rc
-# 之后 go build 会自动链接该 .syso（app_icon_windows_amd64.syso 已随仓库提供）
+# 需要 Go 1.25+；Windows 上还需要 MinGW（MSYS2 UCRT64）以支持 CGO
+go build -o merger.exe    ./cmd/merger
+go build -o toolbox.exe   ./cmd/toolbox
+go build -o paint.exe     ./cmd/paint
 
-# 开发编译（带控制台，可看 log）
-go build -o merger-native.exe .
-
-# 正式编译（GUI 子系统，双击启动无黑色 cmd 框；含 .syso 时自动带图标）
-go build -ldflags "-H windowsgui" -o merger-native.exe .
-
-# 生产构建（带图标也可使用 fyne package）
-fyne package -os windows -icon icon.png -name "提示词+语句合并工具"
+# Windows GUI 程序（双击不弹黑框）
+go build -ldflags "-H windowsgui" -o merger.exe ./cmd/merger
 ```
 
-> 需要 CGO（Windows 上需 MinGW gcc）。本机已验证 Go 1.25 + MinGW 16.1 可正常构建。
->
-> 注意：直接用 `go build` 默认生成的是「控制台子系统」程序，双击会闪一个黑色 cmd 框；
-> 正式分发给用户时应使用上面的 `-ldflags "-H windowsgui"`（等价于 `fyne package` 的效果）。
+跑一遍测试：
 
-## 多平台打包
-
-| 平台 | 产物 | 构建方式 |
-|---|---|---|
-| Windows x64 | `merger-native.exe` / `.zip` | 本机运行 `build.bat` |
-| Windows x64、Linux amd64/arm64 | `fyne-cross/dist/` 下的安装包 | 安装 Docker 后运行 `build-multiplatform.bat` |
-| macOS Intel、Apple Silicon | `.app.tar.gz` | 推送到 GitHub 后运行 `.github/workflows/build-multiplatform.yml` |
-
-本机有 Docker 时，`build-multiplatform.bat` 会自动调用固定版本的 `fyne-cross`，
-交叉构建 Windows amd64 和 Linux amd64/arm64。
-
-macOS 不能在普通 Windows/Linux 主机上合法、完整地跨编译，因为它需要 Apple SDK 并受 Xcode 许可约束。
-仓库中的 GitHub Actions 会在 `windows-latest`、`ubuntu-latest`、`macos-15` 和 `macos-15-intel` 上原生构建。
-手动运行该 workflow 可下载各平台 Artifact；推送 `v*` 标签时还会自动创建 GitHub Release 并附加全部安装包。
-
-Linux 端需要系统提供 X11/OpenGL 运行库；macOS 包当前未做 Apple 签名和公证，首次打开可能需要在 Finder 中右键选择“打开”。
-
-## 性能与可靠性
-
-- 文本输入 → 合并预览：**200 ms 去抖**，避免每键击都触发重算
-- 编辑器 → 配置文件：**1.5 s 去抖**，短时间内多次修改只触发一次落盘
-- 窗口关闭：`SetOnClosed` 同步 `flushAll()`，停掉所有定时器、浏览器服务并立刻同步落盘
-- Fyne UI 更新全部走 `fyne.Do` 回到主线程
-- 配置写入前保护定时器互斥锁
-
-## 配置文件
-
-| 文件 | 位置 | 说明 |
-|---|---|---|
-| `config.json` | 与 exe 同目录 | 多标签配置（含主题、激活标签、`ai` 段：API 地址/Key/模型/系统提示） |
-| `FyneApp.toml` | 与 exe 同目录 | 首次启动自动生成（含线程模型迁移标记） |
-
-`config.json` 的 `ai` 示例：
-
-```json
-{
-  "base_url": "https://api.openai.com/v1",
-  "api_key": "sk-...",
-  "model": "gpt-4o-mini",
-  "system_prompt": "你是一个贴心的助手"
-}
+```bash
+go test ./...
 ```
 
-> 旧版本自动追加的 `history.json`（历史记录侧栏）本版本已移除：左侧改竖向页面导航，合并结果不再自动记录。
+---
 
-## 已知限制
+## 🖼️ 命令行示例
 
-- Fyne v2.8 没有公开 `SetTabsClosable` / `OnClosed`，所以本项目自带 `customTabBar` 实现这些能力；如果你升级到更高版本（公开这些 API 后），可以把 `tabbar.go` 替换成 `container.NewAppTabs` + `SetTabsClosable`
-- 没有图标和托盘（`fyne package` 时可补）
-- 没有应用内「设置」面板——主题切换/数据目录靠 `config.json` 修改
+```bash
+# 打印当前目录的树（忽略 node_modules/.git/build 等）
+toolbox tree
+
+# 限制深度、额外忽略某些目录
+toolbox tree -depth 2 -ignore "dist,tmp" -keyword "test"
+
+# CPU 单核跑分
+toolbox cpubench
+
+# 磁盘顺序读写（默认 1 GiB）
+toolbox diskbench -size 512 -block 32
+
+# 局域网扫描，自动推断网段，结果导出 CSV
+toolbox netscan -timeout 800 -out hosts.csv
+
+# 系统信息（JSON）
+toolbox sysinfo --json --target all
+
+# 生成桌面快捷方式
+toolbox shortcut -name "GitHub" -url "https://github.com" -dir "D:\Desktop"
+
+# 启动局域网文件共享（浏览器打开 http://<IP>:8000）
+toolbox share -dir D:\共享 -addr 0.0.0.0:8000
+
+# 启动开发板性能监视器
+toolbox monitor -addr 0.0.0.0:8888
+```
+
+---
+
+## 🧱 项目结构
+
+```
+Copy-Paste-Mutools/
+├── cmd/
+│   ├── merger/          # 桌面应用入口（Fyne）
+│   ├── toolbox/         # 统一命令行入口
+│   ├── paint/           # 画板入口
+│   └── checktest/ mkicon/ screenshot/   # 开发辅助工具
+├── internal/
+│   ├── data/            # 合并规则、配置读写、目录树生成（纯逻辑，有单测）
+│   ├── ui/              # Fyne 界面层
+│   ├── render/          # Markdown / PGM 地图渲染服务
+│   ├── chat/            # OpenAI 兼容流式聊天
+│   ├── netscan/         # 局域网探测引擎（ICMP/TCP/MAC/主机名）
+│   ├── lanscan/         # 浏览器版局域网扫描服务
+│   ├── netspeed/        # 网速测试服务（含内嵌前端）
+│   └── toolbox/         # 命令行各子命令实现
+│       ├── bench/ sysinfo/ shortcut/ usb/
+│       ├── share/ monitor/ diskm/ netscan/ paint/
+│       └── webassets/   # 前端静态资源（go:embed）
+├── docs/                # 文档站（GitHub Pages 源）
+├── legacy/python/       # 旧版 Python 源码归档（只读参考，不参与构建）
+├── .github/workflows/   # CI：构建 + 发布
+└── go.mod
+```
+
+---
+
+## 🔧 技术栈
+
+- **Go 1.25+**（`go.mod` 声明 `go 1.25`）
+- **Fyne v2.8** — 原生桌面 GUI（OpenGL）
+- **gopsutil v4** — 跨平台系统信息采集（替代 Python 的 psutil + WMI + GPUtil）
+- **gorilla/websocket** — 网速测试的实时通道
+- **纯标准库** — HTTP 服务、SSE、ZIP 打包、目录遍历
+
+---
+
+## 📄 许可证
+
+[MIT](LICENSE)
+
+---
+
+<div align="center">
+
+**[⬆ 回到顶部](#提示词复合工具箱--copy-paste-mutools)**
+
+Made with ❤️ by [XiaoYuyu520520](https://github.com/XiaoYuyu520520)
+
+</div>

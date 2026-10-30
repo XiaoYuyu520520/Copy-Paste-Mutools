@@ -3,9 +3,9 @@ setlocal EnableExtensions
 
 cd /d "%~dp0"
 
-set "APP_ID=prompt-merger-native"
-set "APP_NAME=merger-native"
-set "APP_VERSION=0.0.1"
+set "APP_ID=com.xiaoyuyu.promptmerger.toolbox"
+set "APP_NAME=prompt-merger-toolbox"
+set "APP_VERSION=1.0.0"
 set "FYNE_CROSS_VERSION=v1.6.3"
 set "ICON_PATH=ico/icon.png"
 
@@ -45,6 +45,6 @@ go run github.com/fyne-io/fyne-cross@%FYNE_CROSS_VERSION% linux ^
 if errorlevel 1 exit /b 1
 
 echo [multibuild] done. Output is under fyne-cross\dist.
-echo [multibuild] macOS packages are produced by .github\workflows\build-multiplatform.yml
+echo [multibuild] macOS packages are produced by .github\workflows\release.yml
 echo [multibuild] because non-macOS hosts require an Apple SDK and Xcode license.
 exit /b 0

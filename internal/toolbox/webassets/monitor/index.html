@@ -1,0 +1,1516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hardware Monitor</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, #0a0a1a 0%, #1a1a2e 50%, #16213e 100%);
+  min-height: 100vh;
+  color: #e0e0e0;
+  padding: 20px;
+}
+
+.header {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 18px 28px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-title {
+  font-size: 22px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #4FC3F7, #66BB6A);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.connection-alert {
+  color: #ef5350;
+  font-size: 12px;
+  margin-left: 8px;
+  font-weight: 600;
+  -webkit-text-fill-color: #ef5350;
+}
+
+.header-os {
+  font-size: 13px;
+  color: rgba(255,255,255,0.5);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.card {
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.card-full { grid-column: 1 / -1; }
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,0.7);
+}
+
+.card-title .dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.chart-box {
+  width: 100%;
+  height: 180px;
+}
+
+.chart-box-sm {
+  width: 100%;
+  height: 140px;
+}
+
+.gpu-hidden {
+  display: none !important;
+}
+
+.no-gpu {
+  text-align: center;
+  padding: 40px 20px;
+  color: rgba(255,255,255,0.25);
+  font-size: 14px;
+}
+
+.stats-row {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+}
+
+.stat-item .label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  margin-bottom: 2px;
+}
+
+.stat-item .value {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.disk-list {
+  margin-top: 8px;
+}
+
+.disk-item {
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.disk-item + .disk-item {
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+
+.disk-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.disk-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.disk-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.disk-label {
+  min-width: 50px;
+  color: rgba(255,255,255,0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.disk-pct {
+  min-width: 40px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.disk-detail {
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+  padding-left: 60px;
+}
+
+.net-card .net-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.net-card .net-input {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #e0e0e0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.net-card .net-input:focus {
+  border-color: rgba(79,195,247,0.5);
+}
+
+.net-card .net-input::placeholder {
+  color: rgba(255,255,255,0.25);
+}
+
+.btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  opacity: 0.85;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #4FC3F7;
+  color: #0a0a1a;
+}
+
+.btn-danger {
+  background: #ef5350;
+  color: #fff;
+}
+
+.net-error {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(239,83,80,0.12);
+  border: 1px solid rgba(239,83,80,0.25);
+  color: #ef5350;
+  font-size: 13px;
+}
+
+.net-top {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-bottom: 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.net-latency-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 140px;
+  padding: 16px 20px;
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+.net-latency-value {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.net-latency-value.alive {
+  color: #26C6DA;
+}
+
+.net-latency-value.dead {
+  color: #ef5350;
+}
+
+.net-latency-value.idle {
+  color: rgba(255,255,255,0.2);
+}
+
+.net-latency-unit {
+  font-size: 13px;
+  color: rgba(255,255,255,0.3);
+  margin-top: 4px;
+}
+
+.net-chart-wrap {
+  flex: 1;
+  min-width: 0;
+  height: 120px;
+  padding: 4px;
+}
+
+.net-chart-wrap .chart-box-inline {
+  width: 100%;
+  height: 100%;
+}
+
+.net-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 20px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.net-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.net-meta-item .label {
+  color: rgba(255,255,255,0.35);
+}
+
+.net-meta-item .value {
+  font-weight: 600;
+}
+
+.net-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.net-dot.alive {
+  background: #66BB6A;
+  box-shadow: 0 0 8px rgba(102,187,106,0.4);
+}
+
+.net-dot.dead {
+  background: #ef5350;
+  box-shadow: 0 0 8px rgba(239,83,80,0.4);
+}
+
+.net-dot.idle {
+  background: rgba(255,255,255,0.15);
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  body {
+    padding: 12px;
+  }
+
+  .disk-detail {
+    padding-left: 0;
+  }
+}
+</style>
+</head>
+
+<body>
+<div id="app">
+  <div class="header">
+    <span class="header-title">
+      🔥 Hardware Monitor
+      <span v-if="!isConnected" class="connection-alert">(连接已断开...)</span>
+    </span>
+    <span class="header-os" v-if="data.os">💻 {{ data.os.pretty }}</span>
+  </div>
+
+  <div class="grid">
+    <!-- CPU -->
+    <div class="card">
+      <div class="card-title">
+        <span class="dot" style="background:#4FC3F7"></span>
+        CPU
+      </div>
+
+      <div ref="cpuGauge" class="chart-box"></div>
+
+      <div class="stats-row">
+        <div class="stat-item">
+          <div class="label">物理核心</div>
+          <div class="value" style="color:#4FC3F7">{{ data.cpu.phys_count ?? '-' }}</div>
+        </div>
+
+        <div class="stat-item">
+          <div class="label">逻辑核心</div>
+          <div class="value" style="color:#4FC3F7">{{ data.cpu.logical_count ?? '-' }}</div>
+        </div>
+
+        <div class="stat-item" v-if="data.cpu.freq">
+          <div class="label">频率</div>
+          <div class="value" style="color:#4FC3F7">{{ data.cpu.freq.current.toFixed(0) }} MHz</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPU -->
+    <div class="card">
+      <div class="card-title">
+        <span class="dot" style="background:#66BB6A"></span>
+        GPU
+      </div>
+
+      <div ref="gpuGauge" class="chart-box" v-show="hasGPU"></div>
+
+      <div class="stats-row" v-if="hasGPU">
+        <div class="stat-item" v-if="data.gpu.name">
+          <div class="label">型号</div>
+          <div class="value" style="color:#66BB6A;font-size:12px">{{ data.gpu.name }}</div>
+        </div>
+
+        <div class="stat-item" v-if="data.gpu.freq_mhz !== undefined">
+          <div class="label">频率</div>
+          <div class="value" style="color:#66BB6A">{{ data.gpu.freq_mhz }}/{{ data.gpu.freq_max_mhz }} MHz</div>
+        </div>
+
+        <div class="stat-item" v-if="data.gpu.temp !== undefined">
+          <div class="label">温度</div>
+          <div class="value" style="color:#66BB6A">{{ data.gpu.temp }}°C</div>
+        </div>
+
+        <div class="stat-item" v-if="data.gpu.mem_percent !== undefined">
+          <div class="label">显存</div>
+          <div class="value" style="color:#66BB6A">{{ data.gpu.mem_percent }}%</div>
+        </div>
+      </div>
+
+      <div class="no-gpu" v-if="!hasGPU">
+        <div style="font-size:36px;margin-bottom:8px;opacity:0.3">🖥️</div>
+        <div>不适用</div>
+      </div>
+    </div>
+
+    <!-- CPU Trend -->
+    <div class="card">
+      <div class="card-title">
+        <span class="dot" style="background:#4FC3F7"></span>
+        CPU 每核心占用趋势 (最近 60s)
+      </div>
+
+      <div ref="cpuTrend" class="chart-box" style="height:220px"></div>
+    </div>
+
+    <!-- Network Ping -->
+    <div class="card net-card">
+      <div class="card-title">
+        <span class="dot" style="background:#26C6DA"></span>
+        网络 Ping
+      </div>
+
+      <div class="net-controls">
+        <input
+          class="net-input"
+          v-model="pingTarget"
+          placeholder="输入 IP 地址，如 8.8.8.8"
+          @keyup.enter="startPing"
+          :disabled="pingRunning"
+        />
+
+        <button
+          class="btn btn-primary"
+          @click="startPing"
+          :disabled="!pingTarget || pingRunning"
+        >
+          开始
+        </button>
+
+        <button
+          class="btn btn-danger"
+          @click="stopPing"
+          :disabled="!pingRunning"
+        >
+          停止
+        </button>
+      </div>
+
+      <div class="net-error" v-if="pingError">
+        Ping 失败：{{ pingError }}
+      </div>
+
+      <div class="net-top" v-if="pingStarted">
+        <div class="net-latency-box">
+          <div
+            class="net-latency-value"
+            :class="pingAlive === null ? 'idle' : pingAlive ? 'alive' : 'dead'"
+          >
+            {{ pingLatency !== null ? pingLatency : '--' }}
+          </div>
+
+          <div class="net-latency-unit">ms (当前延迟)</div>
+        </div>
+
+        <div class="net-chart-wrap">
+          <div ref="pingChart" class="chart-box-inline"></div>
+        </div>
+      </div>
+
+      <div class="net-meta-bar" v-if="pingStarted">
+        <div class="net-meta-item">
+          <span
+            class="net-dot"
+            :class="pingAlive === null ? 'idle' : pingAlive ? 'alive' : 'dead'"
+          ></span>
+
+          <span
+            class="value"
+            :style="{ color: pingAlive === null ? 'rgba(255,255,255,0.3)' : pingAlive ? '#66BB6A' : '#ef5350' }"
+          >
+            {{ pingAlive === null ? '等待中...' : pingAlive ? '在线' : '超时' }}
+          </span>
+        </div>
+
+        <div class="net-meta-item">
+          <span class="label">目标</span>
+          <span class="value" style="color:#26C6DA">{{ pingTarget }}</span>
+        </div>
+
+        <div class="net-meta-item">
+          <span class="label">平均</span>
+          <span class="value" style="color:#26C6DA">{{ pingAvg }} ms</span>
+        </div>
+
+        <div class="net-meta-item">
+          <span class="label">丢包</span>
+          <span
+            class="value"
+            :style="{ color: pingLossRate > 20 ? '#ef5350' : pingLossRate > 0 ? '#FFA726' : '#66BB6A' }"
+          >
+            {{ pingLossRate }}%
+          </span>
+        </div>
+      </div>
+
+      <div v-if="!pingStarted" class="no-gpu" style="padding:20px">
+        <div style="font-size:28px;margin-bottom:6px;opacity:0.3">🌐</div>
+        <div>输入 IP 并点击"开始"进行网络延迟监测</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Memory -->
+    <div class="card">
+      <div class="card-title">
+        <span class="dot" style="background:#AB47BC"></span>
+        内存
+      </div>
+
+      <div ref="memGauge" class="chart-box"></div>
+      <div ref="memTrend" class="chart-box" style="height:120px"></div>
+    </div>
+
+    <!-- Disk -->
+    <div class="card">
+      <div class="card-title">
+        <span class="dot" style="background:#FFA726"></span>
+        磁盘
+      </div>
+
+      <div ref="diskChart" class="chart-box"></div>
+
+      <div class="disk-list" v-if="data.disk && data.disk.length">
+        <div class="disk-item" v-for="d in data.disk" :key="d.mount">
+          <div class="disk-header">
+            <span class="disk-label">{{ d.mount }}</span>
+
+            <div class="disk-bar-wrap">
+              <div
+                class="disk-bar-fill"
+                :style="{ width: d.percent + '%', background: diskColor(d.percent) }"
+              ></div>
+            </div>
+
+            <span
+              class="disk-pct"
+              :style="{ color: diskColor(d.percent) }"
+            >
+              {{ d.percent }}%
+            </span>
+          </div>
+
+          <div class="disk-detail">
+            {{ formatBytes(d.used) }} / {{ formatBytes(d.total) }} · {{ d.device }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const {
+  createApp,
+  ref,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  nextTick
+} = Vue;
+
+const MAX_HISTORY = 60;
+
+const COLORS = {
+  cpu: '#4FC3F7',
+  gpu: '#66BB6A',
+  mem: '#AB47BC',
+  disk: '#FFA726',
+  net: '#26C6DA'
+};
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+
+  return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+}
+
+function getCoreColors(count) {
+  return Array.from({ length: count }, (_, i) =>
+    `hsl(${i * 360 / count}, 65%, 55%)`
+  );
+}
+
+const app = createApp({
+  setup() {
+    const data = ref({
+      cpu: {},
+      memory: {},
+      disk: [],
+      gpu: null,
+      os: {}
+    });
+
+    const isConnected = ref(false);
+
+    const cpuHistory = ref(Array(MAX_HISTORY).fill(0));
+    const memHistory = ref(Array(MAX_HISTORY).fill(0));
+    const perCpuHistory = ref([]);
+
+    const cpuGauge = ref(null);
+    const gpuGauge = ref(null);
+    const cpuTrend = ref(null);
+    const memGauge = ref(null);
+    const memTrend = ref(null);
+    const diskChart = ref(null);
+
+    const pingTarget = ref('');
+    const pingRunning = ref(false);
+    const pingStarted = ref(false);
+    const pingHistory = ref([]);
+    const pingLatency = ref(null);
+    const pingAlive = ref(null);
+    const pingChart = ref(null);
+    const pingTotal = ref(0);
+    const pingFailed = ref(0);
+    const pingError = ref('');
+
+    let pingEventSource = null;
+    let pingChartIns = null;
+
+    let cpuGaugeChart = null;
+    let gpuGaugeChart = null;
+    let cpuTrendChart = null;
+    let memGaugeChart = null;
+    let memTrendChart = null;
+    let diskChartIns = null;
+    let eventSource = null;
+
+    const hasGPU = computed(() => data.value.gpu && data.value.gpu.valid);
+
+    const pingAvg = computed(() => {
+      const vals = pingHistory.value.filter(v => v !== null);
+
+      if (!vals.length) return '--';
+
+      return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+    });
+
+    const pingLossRate = computed(() => {
+      if (pingTotal.value === 0) return 0;
+
+      return Math.round(pingFailed.value / pingTotal.value * 100);
+    });
+
+    function diskColor(pct) {
+      if (pct >= 90) return '#ef5350';
+      if (pct >= 70) return '#FFA726';
+
+      return '#66BB6A';
+    }
+
+    function createGauge(dom, color, label) {
+      if (!dom) return null;
+
+      const chart = echarts.init(dom);
+
+      chart.setOption({
+        series: [{
+          type: 'gauge',
+          startAngle: 220,
+          endAngle: -40,
+          min: 0,
+          max: 100,
+          splitNumber: 5,
+          progress: {
+            show: true,
+            width: 12,
+            itemStyle: {
+              color: color
+            }
+          },
+          axisLine: {
+            lineStyle: {
+              width: 12,
+              color: [[1, 'rgba(255,255,255,0.08)']]
+            }
+          },
+          axisTick: {
+            show: false
+          },
+          splitLine: {
+            show: false
+          },
+          axisLabel: {
+            show: false
+          },
+          detail: {
+            offsetCenter: [0, 30],
+            fontSize: 22,
+            fontWeight: 700,
+            color: color,
+            formatter: '{value}%'
+          },
+          title: {
+            offsetCenter: [0, 55],
+            fontSize: 12,
+            color: 'rgba(255,255,255,0.4)',
+            formatter: label
+          },
+          pointer: {
+            show: false
+          },
+          data: [{
+            value: 0
+          }]
+        }]
+      });
+
+      return chart;
+    }
+
+    function initCpuTrendChart() {
+      if (!cpuTrend.value) return;
+
+      cpuTrendChart = echarts.init(cpuTrend.value);
+
+      cpuTrendChart.setOption({
+        grid: {
+          left: 40,
+          right: 16,
+          top: 24,
+          bottom: 24
+        },
+        legend: {
+          type: 'scroll',
+          orient: 'horizontal',
+          left: 'center',
+          top: 0,
+          textStyle: {
+            color: 'rgba(255,255,255,0.5)',
+            fontSize: 10
+          },
+          pageTextStyle: {
+            color: 'rgba(255,255,255,0.3)'
+          },
+          pageIconColor: 'rgba(255,255,255,0.3)',
+          pageIconInactiveColor: 'rgba(255,255,255,0.1)'
+        },
+        tooltip: {
+          trigger: 'axis',
+          textStyle: {
+            fontSize: 12
+          },
+          backgroundColor: 'rgba(20,20,40,0.9)',
+          borderColor: 'rgba(255,255,255,0.1)'
+        },
+        xAxis: {
+          type: 'category',
+          show: true,
+          axisLine: {
+            lineStyle: {
+              color: 'rgba(255,255,255,0.06)'
+            }
+          },
+          axisLabel: {
+            color: 'rgba(255,255,255,0.3)',
+            fontSize: 10
+          },
+          data: Array.from({ length: MAX_HISTORY }, (_, i) => `${i}s`)
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          max: 100,
+          splitLine: {
+            lineStyle: {
+              color: 'rgba(255,255,255,0.04)',
+              type: 'dashed'
+            }
+          },
+          axisLabel: {
+            color: 'rgba(255,255,255,0.3)',
+            fontSize: 10,
+            formatter: '{value}%'
+          }
+        },
+        series: []
+      });
+    }
+
+    function initPingChart() {
+      if (!pingChart.value) return;
+
+      if (pingChartIns) {
+        return;
+      }
+
+      pingChartIns = echarts.init(pingChart.value);
+
+      pingChartIns.setOption({
+        grid: {
+          left: 50,
+          right: 20,
+          top: 12,
+          bottom: 20
+        },
+        xAxis: {
+          type: 'category',
+          show: true,
+          axisLine: {
+            lineStyle: {
+              color: 'rgba(255,255,255,0.06)'
+            }
+          },
+          axisLabel: {
+            color: 'rgba(255,255,255,0.3)',
+            fontSize: 10
+          },
+          data: Array.from({ length: MAX_HISTORY }, (_, i) => `${i}s`)
+        },
+        yAxis: {
+          type: 'value',
+          min: 0,
+          splitLine: {
+            lineStyle: {
+              color: 'rgba(255,255,255,0.04)',
+              type: 'dashed'
+            }
+          },
+          axisLabel: {
+            color: 'rgba(255,255,255,0.3)',
+            fontSize: 10,
+            formatter: '{value} ms'
+          }
+        },
+        series: [
+          {
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            name: '延迟',
+            lineStyle: {
+              width: 2,
+              color: COLORS.net
+            },
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0,
+                y: 0,
+                x2: 0,
+                y2: 1,
+                colorStops: [
+                  {
+                    offset: 0,
+                    color: 'rgba(38,198,218,0.25)'
+                  },
+                  {
+                    offset: 1,
+                    color: 'rgba(38,198,218,0)'
+                  }
+                ]
+              }
+            },
+            connectNulls: false,
+            data: []
+          },
+          {
+            type: 'scatter',
+            name: '丢包',
+            symbol: 'rect',
+            symbolSize: 8,
+            itemStyle: {
+              color: '#ef5350',
+              opacity: 0.9
+            },
+            data: []
+          }
+        ]
+      });
+    }
+
+    function initCharts() {
+      cpuGaugeChart = createGauge(cpuGauge.value, COLORS.cpu, 'CPU 占用');
+      gpuGaugeChart = createGauge(gpuGauge.value, COLORS.gpu, 'MHz');
+
+      initCpuTrendChart();
+
+      if (memTrend.value) {
+        memTrendChart = echarts.init(memTrend.value);
+
+        memTrendChart.setOption({
+          grid: {
+            left: 40,
+            right: 16,
+            top: 12,
+            bottom: 20
+          },
+          xAxis: {
+            type: 'category',
+            show: true,
+            axisLine: {
+              lineStyle: {
+                color: 'rgba(255,255,255,0.06)'
+              }
+            },
+            axisLabel: {
+              color: 'rgba(255,255,255,0.3)',
+              fontSize: 10
+            },
+            data: Array.from({ length: MAX_HISTORY }, (_, i) => `${i}s`)
+          },
+          yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100,
+            splitLine: {
+              lineStyle: {
+                color: 'rgba(255,255,255,0.04)',
+                type: 'dashed'
+              }
+            },
+            axisLabel: {
+              color: 'rgba(255,255,255,0.3)',
+              fontSize: 10,
+              formatter: '{value}%'
+            }
+          },
+          series: [{
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: {
+              width: 2,
+              color: COLORS.mem
+            },
+            areaStyle: {
+              color: {
+                type: 'linear',
+                x: 0,
+                y: 0,
+                x2: 0,
+                y2: 1,
+                colorStops: [
+                  {
+                    offset: 0,
+                    color: 'rgba(171,71,188,0.25)'
+                  },
+                  {
+                    offset: 1,
+                    color: 'rgba(171,71,188,0)'
+                  }
+                ]
+              }
+            },
+            data: memHistory.value
+          }]
+        });
+      }
+
+      if (memGauge.value) {
+        memGaugeChart = echarts.init(memGauge.value);
+
+        memGaugeChart.setOption({
+          series: [{
+            type: 'pie',
+            radius: ['55%', '72%'],
+            avoidLabelOverlap: false,
+            label: {
+              show: false
+            },
+            emphasis: {
+              scale: false
+            },
+            itemStyle: {
+              borderRadius: 4
+            },
+            data: [
+              {
+                value: 0,
+                itemStyle: {
+                  color: COLORS.mem
+                }
+              },
+              {
+                value: 100,
+                itemStyle: {
+                  color: 'rgba(255,255,255,0.06)'
+                }
+              }
+            ]
+          }]
+        });
+      }
+
+      if (diskChart.value) {
+        diskChartIns = echarts.init(diskChart.value);
+
+        diskChartIns.setOption({
+          grid: {
+            left: 50,
+            right: 16,
+            top: 8,
+            bottom: 24
+          },
+          xAxis: {
+            type: 'category',
+            axisLine: {
+              lineStyle: {
+                color: 'rgba(255,255,255,0.06)'
+              }
+            },
+            axisLabel: {
+              color: 'rgba(255,255,255,0.4)',
+              fontSize: 10,
+              rotate: 30
+            },
+            data: []
+          },
+          yAxis: {
+            type: 'value',
+            min: 0,
+            max: 100,
+            splitLine: {
+              lineStyle: {
+                color: 'rgba(255,255,255,0.04)',
+                type: 'dashed'
+              }
+            },
+            axisLabel: {
+              color: 'rgba(255,255,255,0.3)',
+              fontSize: 10,
+              formatter: '{value}%'
+            }
+          },
+          series: [{
+            type: 'bar',
+            barWidth: '50%',
+            itemStyle: {
+              borderRadius: [4, 4, 0, 0]
+            },
+            data: []
+          }]
+        });
+      }
+    }
+
+    function updateCpuTrend(cpuData) {
+      if (!cpuTrendChart) return;
+
+      const perCpu = cpuData.per_cpu;
+
+      if (!perCpu || !perCpu.length) {
+        cpuTrendChart.setOption({
+          series: [{
+            type: 'line',
+            data: cpuHistory.value,
+            lineStyle: {
+              color: COLORS.cpu
+            }
+          }]
+        });
+
+        return;
+      }
+
+      const count = perCpu.length;
+      const colors = getCoreColors(count);
+
+      if (perCpuHistory.value.length !== count) {
+        perCpuHistory.value = Array.from(
+          { length: count },
+          () => [...cpuHistory.value]
+        );
+      }
+
+      for (let i = 0; i < count; i++) {
+        if (perCpuHistory.value[i]) {
+          perCpuHistory.value[i].push(perCpu[i]);
+          perCpuHistory.value[i].shift();
+        }
+      }
+
+      const series = perCpuHistory.value.map((coreData, i) => ({
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        name: `Core ${i}`,
+        lineStyle: {
+          width: 1.5,
+          color: colors[i]
+        },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              {
+                offset: 0,
+                color: colors[i].replace(')', ',0.15)').replace('hsl', 'hsla')
+              },
+              {
+                offset: 1,
+                color: colors[i].replace(')', ',0)').replace('hsl', 'hsla')
+              }
+            ]
+          }
+        },
+        data: coreData
+      }));
+
+      cpuTrendChart.setOption({
+        series
+      });
+    }
+
+    function updateCharts() {
+      const d = data.value;
+
+      if (cpuGaugeChart) {
+        cpuGaugeChart.setOption({
+          series: [{
+            data: [{
+              value: d.cpu.percent ?? 0
+            }]
+          }]
+        });
+      }
+
+      if (gpuGaugeChart && hasGPU.value && d.gpu) {
+        gpuGaugeChart.resize();
+
+        const freq = d.gpu.freq_mhz ?? 0;
+        const pct = d.gpu.freq_pct ?? 0;
+
+        gpuGaugeChart.setOption({
+          series: [{
+            data: [{
+              value: pct
+            }],
+            detail: {
+              formatter: String(freq),
+              fontSize: 20,
+              fontWeight: 700,
+              offsetCenter: [0, 15],
+              color: COLORS.gpu
+            },
+            title: {
+              formatter: 'MHz',
+              offsetCenter: [0, 34],
+              fontSize: 12,
+              color: 'rgba(255,255,255,0.4)'
+            }
+          }]
+        });
+      }
+
+      if (d.cpu) {
+        updateCpuTrend(d.cpu);
+      }
+
+      if (memTrendChart) {
+        memTrendChart.setOption({
+          series: [{
+            data: [...memHistory.value]
+          }]
+        });
+      }
+
+      if (memGaugeChart && d.memory) {
+        const pct = d.memory.percent ?? 0;
+        const used = d.memory.used
+          ? (d.memory.used / 1024 / 1024 / 1024).toFixed(1)
+          : 0;
+        const total = d.memory.total
+          ? (d.memory.total / 1024 / 1024 / 1024).toFixed(1)
+          : 0;
+
+        memGaugeChart.setOption({
+          series: [{
+            data: [
+              {
+                value: pct,
+                name: `${used}GB / ${total}GB`
+              },
+              {
+                value: 100 - pct
+              }
+            ]
+          }],
+          title: {
+            text: `${pct}%\n${used}GB/${total}GB`,
+            left: 'center',
+            top: 'center',
+            textStyle: {
+              fontSize: 14,
+              fontWeight: 600,
+              color: COLORS.mem,
+              lineHeight: 22
+            }
+          }
+        });
+      }
+
+      if (diskChartIns && d.disk && d.disk.length) {
+        const mounts = d.disk.map(x => x.mount);
+        const pcts = d.disk.map(x => ({
+          value: x.percent,
+          itemStyle: {
+            color: diskColor(x.percent)
+          }
+        }));
+
+        diskChartIns.setOption({
+          xAxis: {
+            data: mounts
+          },
+          series: [{
+            data: pcts
+          }]
+        });
+      }
+    }
+
+    function updatePingChart() {
+      if (!pingChartIns) return;
+
+      const lossScatter = [];
+
+      pingHistory.value.forEach((v, i) => {
+        if (v === null) {
+          lossScatter.push([i, 0]);
+        }
+      });
+
+      pingChartIns.setOption({
+        series: [
+          {
+            data: [...pingHistory.value]
+          },
+          {
+            data: lossScatter
+          }
+        ]
+      });
+    }
+
+    function startPing() {
+      if (!pingTarget.value || pingRunning.value) return;
+
+      const target = pingTarget.value.trim();
+
+      if (!target) return;
+
+      pingRunning.value = true;
+      pingStarted.value = true;
+      pingError.value = '';
+      pingHistory.value = Array(MAX_HISTORY).fill(null);
+      pingLatency.value = null;
+      pingAlive.value = null;
+      pingTotal.value = 0;
+      pingFailed.value = 0;
+
+      nextTick(() => {
+        if (!pingChartIns) {
+          initPingChart();
+        } else {
+          pingChartIns.resize();
+        }
+
+        updatePingChart();
+      });
+
+      pingEventSource = new EventSource(
+        `/api/ping/stream?target=${encodeURIComponent(target)}`
+      );
+
+      pingEventSource.onmessage = (e) => {
+        try {
+          const p = JSON.parse(e.data);
+
+          if (p.error) {
+            pingError.value = p.error;
+            stopPing();
+            return;
+          }
+
+          pingTotal.value++;
+
+          if (!p.alive) {
+            pingFailed.value++;
+          }
+
+          pingAlive.value = p.alive;
+          pingLatency.value = p.latency_ms;
+
+          pingHistory.value.push(p.latency_ms);
+          pingHistory.value.shift();
+
+          updatePingChart();
+        } catch (err) {
+          pingError.value = '返回数据解析失败';
+          stopPing();
+        }
+      };
+
+      pingEventSource.onerror = () => {
+        pingError.value = 'Ping 连接已断开';
+        stopPing();
+      };
+    }
+
+    function stopPing() {
+      pingRunning.value = false;
+
+      if (pingEventSource) {
+        pingEventSource.close();
+        pingEventSource = null;
+      }
+    }
+
+    function onResize() {
+      [
+        cpuGaugeChart,
+        gpuGaugeChart,
+        cpuTrendChart,
+        memGaugeChart,
+        memTrendChart,
+        diskChartIns,
+        pingChartIns
+      ].forEach(c => c && c.resize());
+    }
+
+    function handleStreamData(d) {
+      data.value = d;
+      isConnected.value = true;
+
+      if (d.cpu && d.cpu.percent !== undefined) {
+        cpuHistory.value.push(d.cpu.percent);
+        cpuHistory.value.shift();
+      }
+
+      if (d.memory && d.memory.percent !== undefined) {
+        memHistory.value.push(d.memory.percent);
+        memHistory.value.shift();
+      }
+
+      updateCharts();
+    }
+
+    watch(hasGPU, async (visible) => {
+      if (!visible) return;
+
+      await nextTick();
+
+      if (gpuGaugeChart) {
+        gpuGaugeChart.resize();
+        updateCharts();
+      }
+    });
+
+    onMounted(async () => {
+      initCharts();
+      window.addEventListener('resize', onResize);
+
+      try {
+        const res = await fetch('/api/status');
+        const d = await res.json();
+
+        handleStreamData(d);
+      } catch (e) {
+        console.error('Fetch failed:', e);
+        isConnected.value = false;
+      }
+
+      eventSource = new EventSource('/api/stream');
+
+      eventSource.onopen = () => {
+        isConnected.value = true;
+      };
+
+      eventSource.onmessage = (e) => {
+        try {
+          handleStreamData(JSON.parse(e.data));
+        } catch (err) {
+          console.error('Stream parse failed:', err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        isConnected.value = false;
+      };
+    });
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('resize', onResize);
+
+      stopPing();
+
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+
+      [
+        cpuGaugeChart,
+        gpuGaugeChart,
+        cpuTrendChart,
+        memGaugeChart,
+        memTrendChart,
+        diskChartIns,
+        pingChartIns
+      ].forEach(c => c && c.dispose());
+
+      cpuGaugeChart = null;
+      gpuGaugeChart = null;
+      cpuTrendChart = null;
+      memGaugeChart = null;
+      memTrendChart = null;
+      diskChartIns = null;
+      pingChartIns = null;
+    });
+
+    return {
+      data,
+      isConnected,
+      hasGPU,
+
+      cpuGauge,
+      gpuGauge,
+      cpuTrend,
+      memGauge,
+      memTrend,
+      diskChart,
+
+      diskColor,
+      formatBytes,
+
+      pingTarget,
+      pingRunning,
+      pingStarted,
+      pingHistory,
+      pingLatency,
+      pingAlive,
+      pingChart,
+      pingAvg,
+      pingLossRate,
+      pingError,
+
+      startPing,
+      stopPing
+    };
+  }
+});
+
+app.mount('#app');
+</script>
+</body>
+</html>

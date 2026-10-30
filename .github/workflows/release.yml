@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-amd64
+            runner: windows-latest
+            os: windows
+            arch: amd64
+          - target: linux-amd64
+            runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - target: linux-arm64
+            runner: ubuntu-latest
+            os: linux
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Linux build dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libc6-dev libgl1-mesa-dev xorg-dev
+
+      - name: Build (CGO enabled)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOOS=${{ matrix.os }}
+          export GOARCH=${{ matrix.arch }}
+          export CGO_ENABLED=1
+          mkdir -p release
+          go build -trimpath -ldflags="-s -w" -o release/toolbox-${{ matrix.target }} ./cmd/toolbox
+          go build -trimpath -ldflags="-s -w" -o release/paint-${{ matrix.target }} ./cmd/paint
+
+      # merger 依赖 Fyne/OpenGL，跨平台交叉编译不可行，
+      # 因此分别在三个原生 runner 上分别构建。
+      - name: Build merger (native)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOOS=${{ matrix.os }}
+          export GOARCH=${{ matrix.arch }}
+          export CGO_ENABLED=1
+          go build -trimpath -ldflags="-s -w" -o release/merger-${{ matrix.target }} ./cmd/merger
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            for f in *; do
+              [ -f "$f" ] || continue
+              zip -q "$f.zip" "$f"
+              rm -f "$f"
+            done
+          else
+            for f in *; do
+              [ -f "$f" ] || continue
+              tar -czf "$f.tar.gz" "$f"
+              rm -f "$f"
+            done
+          fi
+          ls -lh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" artifacts/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" artifacts/* --generate-notes
+          fi
+
+  pages:
+    name: Deploy GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
