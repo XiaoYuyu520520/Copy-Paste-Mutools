@@ -14,6 +14,9 @@ permissions:
 env:
   GO_VERSION: "1.25"
   APP_ID: com.xiaoyuyu.promptmerger
+  # 这个值是 Android 桌面图标下显示的名字，保留中文。
+  # 注意 fyne 会用它推导 .so/产物文件名（非 ASCII 会变成 _），
+  # 所以收集产物时会统一改名成 prompt-merger-toolbox-android-arm64.apk。
   APP_NAME: 提示词工具箱
   APP_VERSION: "1.1.0"
   APP_BUILD: "1"
@@ -120,7 +123,8 @@ jobs:
           mkdir -p dist
           found=0
           while IFS= read -r -d '' apk; do
-            cp "$apk" dist/
+            # fyne 用包名推导文件名，非 ASCII 会被替换成 _，这里统一改名
+            cp "$apk" "dist/prompt-merger-toolbox-android-arm64.apk"
             found=1
             echo "收集到 $apk"
           done < <(find . -name '*.apk' -not -path './dist/*' -print0)
