@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>在线工具总览 · 提示词复合工具箱</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  .intro {
+    background: linear-gradient(135deg, rgba(58,150,255,.16), rgba(58,150,255,.04));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin-bottom: 24px;
+  }
+  .intro h1 { font-size: 28px; margin: 0 0 8px; }
+  .intro p { color: var(--muted); margin: 0; }
+  .tools { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .tool-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    color: var(--text);
+    transition: border-color .15s, transform .15s, background .15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .tool-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity .15s;
+  }
+  .tool-card:hover {
+    text-decoration: none;
+    border-color: var(--accent);
+    transform: translateY(-3px);
+    background: var(--panel-2);
+  }
+  .tool-card:hover::before { opacity: 1; }
+  .tool-card .tag {
+    align-self: flex-start;
+    font-size: 12px;
+    color: var(--accent);
+    background: rgba(58,150,255,.12);
+    border: 1px solid rgba(58,150,255,.3);
+    border-radius: 999px;
+    padding: 1px 10px;
+  }
+  .tool-card h3 { margin: 2px 0 0; font-size: 18px; }
+  .tool-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; flex: 1; }
+  .tool-card .go { color: var(--accent); font-size: 13px; font-weight: 600; }
+  .scenes { margin-top: 8px; }
+  .scenes td:first-child { color: var(--text); }
+  .scenes td:last-child { color: var(--muted); }
+  .scenes a { font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="top">
+    <span class="brand">提示词复合工具箱 · 在线工具</span>
+    <a href="index.html" class="active">工具总览</a>
+    <a href="base64.html">Base64</a>
+    <a href="qrcode.html">二维码</a>
+    <a href="codec.html">编解码检测</a>
+    <a href="markdown.html">Markdown</a>
+    <a href="mapview.html">激光地图</a>
+    <a href="../index.html">文档首页</a>
+  </nav>
+
+  <div class="intro">
+    <h1>在线工具总览</h1>
+    <p>与桌面版 / 命令行工具同源的网页版，打开即用。全部在浏览器本地处理，不上传文件与数据。</p>
+  </div>
+
+  <div class="tools">
+    <a class="tool-card" href="base64.html">
+      <span class="tag">编码 / 转换</span>
+      <h3>Base64 编解码</h3>
+      <p>UTF-8 中文不乱码，支持 URL-safe、76 字符换行、文件转 Base64。</p>
+      <span class="go">打开工具 →</span>
+    </a>
+
+    <a class="tool-card" href="qrcode.html">
+      <span class="tag">图像 / 生成</span>
+      <h3>二维码生成器</h3>
+      <p>文本 / 网址即时生成，支持 L/M/Q/H 纠错、静默边距、前景背景色，下载 PNG / SVG。</p>
+      <span class="go">打开工具 →</span>
+    </a>
+
+    <a class="tool-card" href="codec.html">
+      <span class="tag">媒体 / 诊断</span>
+      <h3>浏览器编解码检测</h3>
+      <p>检测 H.264 / HEVC / AV1 / VP9 与 AAC / Opus 等支持情况，含 WebRTC 实时通信与硬件编码迹象。</p>
+      <span class="go">打开工具 →</span>
+    </a>
+
+    <a class="tool-card" href="markdown.html">
+      <span class="tag">文档 / 预览</span>
+      <h3>Markdown 实时预览</h3>
+      <p>GitHub 风格渲染、代码高亮与复制按钮，支持亮暗主题、左右对照、打印导出。</p>
+      <span class="go">打开工具 →</span>
+    </a>
+
+    <a class="tool-card" href="mapview.html">
+      <span class="tag">机器人 / 地图</span>
+      <h3>2D 激光 SLAM 地图</h3>
+      <p>打开 .pgm + .yaml：比例尺、测距、橡皮、导出；仅 YAML 时作为编辑器，仅 PGM 支持像素测量。</p>
+      <span class="go">打开工具 →</span>
+    </a>
+  </div>
+
+  <div class="card scenes" style="margin-top:26px">
+    <h2 style="margin-top:0">按场景快速跳转</h2>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td>把一段中文编码成 Base64，或解回去</td><td><a href="base64.html">Base64 编解码 →</a></td></tr>
+          <tr><td>把网址 / Wi-Fi 信息生成二维码并下载</td><td><a href="qrcode.html">二维码生成器 →</a></td></tr>
+          <tr><td>看看这台设备能不能硬解 / 硬编 H.264、VP9、AV1</td><td><a href="codec.html">编解码检测 →</a></td></tr>
+          <tr><td>快速预览 README / 写 Markdown 并看效果</td><td><a href="markdown.html">Markdown 预览 →</a></td></tr>
+          <tr><td>查看 / 测量 / 擦除 ROS 激光地图，或编辑地图 YAML</td><td><a href="mapview.html">激光地图 →</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Made with ❤️ by <a href="https://github.com/XiaoYuyu520520">XiaoYuyu520520</a> · MIT License</footer>
+</div>
+</body>
+</html>

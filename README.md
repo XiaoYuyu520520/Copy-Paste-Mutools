@@ -26,6 +26,8 @@
 | **[Markdown 实时预览](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html)** | GitHub 风格渲染、代码高亮、亮暗主题、左右对照 |
 | **[2D 激光地图查看器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)** | 打开 `.pgm + .yaml`：比例尺 / 测距 / 橡皮 / 导出；仅 YAML 时作为编辑器 |
 
+> 🧰 在线工具总览（快速跳转）：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/>
+>
 > 📘 文档站首页：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/>
 
 ---
