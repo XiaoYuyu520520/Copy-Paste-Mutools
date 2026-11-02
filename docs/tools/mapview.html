@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>2D 激光 SLAM 地图查看器 · 在线工具</title>
 <link rel="icon" href="data:,">
+<link rel="stylesheet" href="common.css">
 <style>
   html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
     font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
@@ -37,7 +38,7 @@
   #emptyState button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
     padding:6px 16px;cursor:pointer}
   #toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;z-index:40;
-    pointer-events:none;transition:opacity .2s,transform .2s;background:#161b22;color:#e6edf3;
+    pointer-events:none;transition:opacity .2s,transform .2s;background:#161b22;color:#e6edf3;z-index:70;
     border:1px solid #30363d;border-radius:8px;padding:7px 14px;font-size:13px;
     box-shadow:0 6px 20px rgba(1,4,9,.6);max-width:70vw}
   #toast.on{opacity:1;transform:translate(-50%,0)}
@@ -89,6 +90,10 @@
       只拖入 <code>.pgm</code> 也能预览 / 擦除 / 下载，距离按像素显示。
     </div>
     <button id="openBtn2">选择文件…</button>
+    <div style="margin-top:16px;font-size:12px;line-height:1.9;color:#8b949e">
+      需要离线桌面版？<a href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases" target="_blank" rel="noopener" style="color:#1f6feb">Releases 下载</a>
+      · 需求 / Bug：<a href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/issues" target="_blank" rel="noopener" style="color:#1f6feb">提交 Issue</a>
+    </div>
   </div>
   <div id="mapwrap" style="display:none">
     <canvas id="map"></canvas>
@@ -120,6 +125,7 @@
 <div id="drop"><div class="hint">松手即打开地图 / YAML 编辑器</div></div>
 <div id="toast"></div>
 
+<script src="common.js"></script>
 <script>
 (function(){
   function $(id){ return document.getElementById(id); }
@@ -617,7 +623,11 @@
   $('openBtn2').onclick = function(){ fileInput.click(); };
   btnYaml.onclick = openCurrentYaml;
   $('yamlCheck').onclick = validateYaml;
-  $('yamlCopy').onclick = function(){ copyText(yamlEditor.value, 'YAML 已复制'); };
+  $('yamlCopy').onclick = function(){
+    if (!yamlEditor.value.trim()) { setYamlResult('内容为空，无法复制', 'err'); return; }
+    copyText(yamlEditor.value);
+    setYamlResult('已复制到剪贴板', 'ok');
+  };
   $('yamlDownload').onclick = downloadYaml;
   $('yamlApply').onclick = applyYaml;
   $('yamlClose').onclick = closeYamlEditor;

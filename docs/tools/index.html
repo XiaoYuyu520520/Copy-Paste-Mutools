@@ -61,6 +61,21 @@
   .scenes td:first-child { color: var(--text); }
   .scenes td:last-child { color: var(--muted); }
   .scenes a { font-weight: 600; }
+  .offline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+  .offline h2 { margin: 0 0 6px; font-size: 18px; }
+  .offline .acts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .ghbtn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .ghbtn:hover { text-decoration: none; filter: brightness(1.1); }
+  .ghbtn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .ghbtn.ghost:hover { border-color: var(--accent); color: var(--accent); filter: none; }
 </style>
 </head>
 <body>
@@ -79,6 +94,20 @@
   <div class="intro">
     <h1>在线工具总览</h1>
     <p>与桌面版 / 命令行工具同源的网页版，打开即用。全部在浏览器本地处理，不上传文件与数据。</p>
+  </div>
+
+  <div class="card offline">
+    <div class="txt">
+      <h2>需要离线部署？</h2>
+      <p class="hint" style="margin:0">
+        网页版受浏览器能力限制；桌面版 / 命令行 / Android 安装包可在 Releases 下载。
+        使用中遇到问题或有新需求，欢迎到 GitHub 提交。
+      </p>
+    </div>
+    <div class="acts">
+      <a class="ghbtn" href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases" target="_blank" rel="noopener">下载离线版</a>
+      <a class="ghbtn ghost" href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/issues" target="_blank" rel="noopener">提交需求 / Bug</a>
+    </div>
   </div>
 
   <div class="tools">

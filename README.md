@@ -28,6 +28,9 @@
 
 > 🧰 在线工具总览（快速跳转）：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/>
 >
+> ⬇ 需要离线部署 / 桌面版：去 [Releases](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases) 下载；
+> 需求或 Bug 请提交 [Issue](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/issues)。
+>
 > 📘 文档站首页：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/>
 
 ---
