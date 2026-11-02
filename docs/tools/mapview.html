@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2D 激光 SLAM 地图查看器 · 在线工具</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
+    font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
+  #topbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;
+    background:#161b22;border-bottom:1px solid #30363d}
+  #topbar .title{font-weight:600}
+  #topbar .muted{color:#8b949e;font-size:12px}
+  #topbar .sp{flex:1}
+  #topbar button,#topbar a.link{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
+    padding:4px 12px;cursor:pointer;text-decoration:none;font-size:13px;line-height:1.5}
+  #topbar button:hover,#topbar a.link:hover{background:#30363d}
+  #topbar button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+  #topbar button:disabled{opacity:.45;cursor:not-allowed}
+  #topbar label{font-size:12px;color:#8b949e}
+  #topbar input[type="range"]{width:110px}
+  #stage{height:calc(100% - 47px);overflow:auto;display:flex;align-items:center;justify-content:center;
+    background:#010409}
+  #mapwrap{position:relative;margin:24px}
+  #mapwrap canvas{position:absolute;left:0;top:0}
+  #mapwrap canvas#ov{cursor:crosshair}
+  #tip{padding:0 4px;color:#8b949e;font-size:12px}
+  #tip b{color:#e6edf3}
+  #drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:30;
+    background:rgba(31,111,235,.12);border:3px dashed #1f6feb;pointer-events:none}
+  #drop.on{display:flex}
+  #drop .hint{background:#1f6feb;color:#fff;padding:10px 22px;border-radius:999px;font-weight:700}
+  #emptyState{max-width:640px;text-align:center;color:#8b949e;padding:24px}
+  #emptyState .big{font-size:19px;font-weight:700;color:#e6edf3;margin-bottom:10px}
+  #emptyState .sub{font-size:13px;line-height:1.9;margin-bottom:16px}
+  #emptyState button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
+    padding:6px 16px;cursor:pointer}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;z-index:40;
+    pointer-events:none;transition:opacity .2s,transform .2s;background:#161b22;color:#e6edf3;
+    border:1px solid #30363d;border-radius:8px;padding:7px 14px;font-size:13px;
+    box-shadow:0 6px 20px rgba(1,4,9,.6);max-width:70vw}
+  #toast.on{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <span class="title">2D 激光 SLAM 地图</span>
+  <span class="muted" id="meta">未加载地图</span>
+  <span class="sp"></span>
+  <button id="openBtn" title="选择 .pgm（可同时选择 .yaml）">打开地图…</button>
+  <button id="measureBtn" title="点击两次测量两点直线距离" disabled>测量尺子</button>
+  <button id="eraseBtn" title="把地图上的障碍物像素擦成空白" disabled>障碍物擦除</button>
+  <label>橡皮</label><input id="brush" type="range" min="1" max="40" value="8">
+  <button id="saveBtn" disabled>保存下载 .pgm + .yaml</button>
+  <a class="link" href="markdown.html">Markdown →</a>
+  <a class="link" href="../index.html">← 工具首页</a>
+  <input id="file" type="file" multiple hidden accept=".pgm,.yaml,.yml">
+</div>
+<div id="stage">
+  <div id="emptyState">
+    <div class="big">打开 .pgm + .yaml 地图</div>
+    <div class="sub">
+      把 <code>.pgm</code> 与同名 <code>.yaml</code> 一起拖进页面，或点击下方按钮选择。<br>
+      有 <code>.yaml</code> 时启用比例尺与真实距离测量；全部在本地浏览器处理。
+    </div>
+    <button id="openBtn2">选择文件…</button>
+  </div>
+  <div id="mapwrap" style="display:none">
+    <canvas id="map"></canvas>
+    <canvas id="ov"></canvas>
+  </div>
+</div>
+<div id="drop"><div class="hint">松手即打开地图</div></div>
+<div id="toast"></div>
+
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+  var state = {
+    width: 0, height: 0, baseName: 'map', info: null,
+    img: null, scale: 1, cssW: 0, cssH: 0,
+    tool: 'none', seg: [], curSeg: null, dirty: false, loading: false
+  };
+  var meta = $('meta'), wrap = $('mapwrap'), emptyState = $('emptyState');
+  var mapCv = $('map'), ovCv = $('ov');
+  var mctx = mapCv.getContext('2d'), octx = ovCv.getContext('2d');
+  var btnM = $('measureBtn'), btnE = $('eraseBtn'), btnSave = $('saveBtn');
+  var brush = $('brush'), fileInput = $('file');
+  var tip = document.createElement('span');
+  tip.id = 'tip';
+
+  function metric(){ return !!(state.info && state.info.resolution > 0); }
+
+  function toast(msg){
+    var t = $('toast');
+    t.textContent = msg; t.classList.add('on');
+    clearTimeout(toast.__timer);
+    toast.__timer = setTimeout(function(){ t.classList.remove('on'); }, 3000);
+  }
+
+  // ---------- YAML 解析（与桌面版 map_server 规则一致，容错） ----------
+  function parseYAML(text){
+    var info = { raw: text, image: '', resolution: 0, origin: [0, 0, 0], negate: 0,
+                 occupied_thresh: 0.65, free_thresh: 0.196 };
+    String(text || '').split('\n').forEach(function(rawLine){
+      var line = rawLine.trim();
+      if (!line || line.charAt(0) === '#') return;
+      var idx = line.indexOf(':');
+      if (idx < 0) return;
+      var key = line.slice(0, idx).trim();
+      var val = line.slice(idx + 1).trim();
+      var hash = val.indexOf('#');
+      if (hash >= 0) val = val.slice(0, hash).trim();
+      if (key === 'image') info.image = val.replace(/^["']|["']$/g, '');
+      else if (key === 'resolution') info.resolution = parseFloat(val) || 0;
+      else if (key === 'negate') info.negate = parseInt(val, 10) || 0;
+      else if (key === 'occupied_thresh') info.occupied_thresh = parseFloat(val);
+      else if (key === 'free_thresh') info.free_thresh = parseFloat(val);
+      else if (key === 'origin') {
+        var nums = val.match(/[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g) || [];
+        for (var i = 0; i < 3 && i < nums.length; i++) info.origin[i] = parseFloat(nums[i]) || 0;
+      }
+    });
+    return info;
+  }
+
+  // ---------- PGM 解析（P5/P2，8/16 位） ----------
+  function tokenize(buf, pos){
+    while (pos < buf.length){
+      var c = buf[pos];
+      if (c === 32 || c === 9 || c === 13 || c === 10) { pos++; continue; }
+      if (c === 35) { while (pos < buf.length && buf[pos] !== 10) pos++; continue; }
+      var start = pos;
+      while (pos < buf.length){
+        var b = buf[pos];
+        if (b === 32 || b === 9 || b === 13 || b === 10 || b === 35) break;
+        pos++;
+      }
+      return { tok: String.fromCharCode.apply(null, buf.subarray(start, pos)), next: pos };
+    }
+    throw new Error('意外的文件结尾');
+  }
+
+  function decodePGM(buf){
+    var r = tokenize(buf, 0), magic = r.tok, pos = r.next;
+    if (magic !== 'P5' && magic !== 'P2') throw new Error('不支持的 PGM 魔数 ' + magic + '（仅 P5/P2）');
+    var dims = [];
+    for (var i = 0; i < 3; i++){
+      r = tokenize(buf, pos); pos = r.next;
+      var v = parseInt(r.tok, 10);
+      if (!isFinite(v)) throw new Error('PGM 头字段非法：' + r.tok);
+      dims.push(v);
+    }
+    var w = dims[0], h = dims[1], maxv = dims[2];
+    if (w <= 0 || h <= 0 || maxv <= 0) throw new Error('非法尺寸/最大灰度');
+    if (magic === 'P5' && pos < buf.length){
+      var sep = buf[pos];
+      if (sep === 32 || sep === 9 || sep === 13 || sep === 10) pos++;
+    }
+    var out = new Uint8ClampedArray(w * h);
+    var scale = function(v){ return maxv === 255 ? v : Math.min(255, Math.floor(v * 255 / maxv)); };
+    if (magic === 'P2'){
+      for (var k = 0; k < w * h; k++){
+        r = tokenize(buf, pos); pos = r.next;
+        out[k] = scale(parseInt(r.tok, 10) || 0);
+      }
+    } else if (maxv <= 255){
+      if (buf.length - pos < w * h) throw new Error('P5 数据不足');
+      out.set(buf.subarray(pos, pos + w * h));
+    } else {
+      for (var j = 0; j < w * h; j++){
+        if (pos + 2 > buf.length) throw new Error('P5(16bit) 数据不足');
+        out[j] = scale((buf[pos] << 8) | buf[pos + 1]);
+        pos += 2;
+      }
+    }
+    return { width: w, height: h, pixels: out };
+  }
+
+  function grayToCanvas(gray){
+    var cv = document.createElement('canvas');
+    cv.width = gray.width; cv.height = gray.height;
+    var ctx = cv.getContext('2d');
+    var imgData = ctx.createImageData(gray.width, gray.height);
+    for (var i = 0; i < gray.pixels.length; i++){
+      var g = gray.pixels[i];
+      imgData.data[i*4] = g; imgData.data[i*4+1] = g; imgData.data[i*4+2] = g; imgData.data[i*4+3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return cv;
+  }
+
+  // ---------- 视图 ----------
+  function fit(force){
+    if (!state.img) return;
+    var stage = $('stage');
+    var availW = Math.max(120, stage.clientWidth - 60);
+    var availH = Math.max(120, stage.clientHeight - 80);
+    state.scale = Math.min(availW / state.width, availH / state.height, 3);
+    if (state.scale <= 0) state.scale = 0.2;
+    state.cssW = Math.round(state.width * state.scale);
+    state.cssH = Math.round(state.height * state.scale);
+    // 只有尺寸变化/换图时才重置画布，避免窗口缩放把擦除结果清掉
+    if (force || mapCv.width !== state.width || mapCv.height !== state.height){
+      mapCv.width = state.width; mapCv.height = state.height;
+      redrawMap();
+    }
+    ovCv.width = state.cssW; ovCv.height = state.cssH;
+    [mapCv, ovCv].forEach(function(c){
+      c.style.width = state.cssW + 'px'; c.style.height = state.cssH + 'px';
+    });
+    wrap.style.width = state.cssW + 'px';
+    wrap.style.height = state.cssH + 'px';
+    drawOverlay();
+  }
+
+  // 地图画布始终按原图分辨率保存像素，缩放只改 CSS 尺寸
+  function redrawMap(){
+    if (!state.img) return;
+    mctx.clearRect(0, 0, mapCv.width, mapCv.height);
+    mctx.drawImage(state.img, 0, 0);
+  }
+
+  function cssP(p){ return [p[0] * state.scale, p[1] * state.scale]; }
+
+  function niceM(target){
+    var mags = [1,2,5,10,20,50,100,200,500];
+    var cssPerM = state.cssW / (state.width * state.info.resolution);
+    for (var i = 0; i < mags.length; i++){
+      var m = mags[i] * 0.001;
+      if (m * cssPerM >= target * 0.6) return m;
+    }
+    return mags[mags.length - 1] * 0.001;
+  }
+
+  function drawOverlay(){
+    octx.clearRect(0, 0, state.cssW, state.cssH);
+    if (!state.img) return;
+    if (metric()){
+      var cssPerM = state.cssW / (state.width * state.info.resolution);
+      var m = niceM(120);
+      var bar = Math.round(m * cssPerM);
+      var x = 14, y = state.cssH - 24;
+      octx.strokeStyle = 'rgba(255,255,255,0.9)';
+      octx.fillStyle = 'rgba(255,255,255,0.9)';
+      octx.lineWidth = 2;
+      octx.beginPath(); octx.moveTo(x, y); octx.lineTo(x + bar, y); octx.stroke();
+      octx.beginPath(); octx.moveTo(x, y - 5); octx.lineTo(x, y + 5); octx.stroke();
+      octx.beginPath(); octx.moveTo(x + bar, y - 5); octx.lineTo(x + bar, y + 5); octx.stroke();
+      var txt = m >= 1 ? m + ' m' : (m * 1000) + ' cm';
+      octx.fillText(txt, x, y - 8);
+    }
+    octx.strokeStyle = '#ffa657'; octx.fillStyle = '#ffa657';
+    octx.lineWidth = 2;
+    state.seg.concat(state.curSeg ? [state.curSeg] : []).forEach(function(s){
+      var a = cssP([s[0], s[1]]), b = cssP([s[2], s[3]]);
+      octx.beginPath(); octx.moveTo(a[0], a[1]); octx.lineTo(b[0], b[1]); octx.stroke();
+      octx.beginPath(); octx.arc(a[0], a[1], 4, 0, Math.PI * 2); octx.fill();
+      octx.beginPath(); octx.arc(b[0], b[1], 4, 0, Math.PI * 2); octx.fill();
+      if (metric()){
+        var dist = Math.hypot((s[2] - s[0]) * state.info.resolution, (s[3] - s[1]) * state.info.resolution);
+        octx.fillText(dist.toFixed(2) + ' m', (a[0] + b[0]) / 2 + 8, (a[1] + b[1]) / 2 - 8);
+      }
+    });
+  }
+
+  function setTool(t){
+    state.tool = t;
+    btnM.classList.toggle('active', t === 'measure');
+    btnE.classList.toggle('active', t === 'erase');
+    var modeTxt = t === 'measure' ? '测量模式：点地图两点，显示直线距离；再点工具关闭'
+      : t === 'erase' ? '擦除模式：按住鼠标在障碍物上拖动，把像素刷成空白'
+      : '选择右上工具：测量尺子 / 障碍物擦除';
+    tip.innerHTML = '<b>' + modeTxt + '</b>';
+  }
+
+  function pick(ev){
+    var r = ovCv.getBoundingClientRect();
+    var x = (ev.clientX - r.left) * state.width / r.width;
+    var y = (ev.clientY - r.top) * state.height / r.height;
+    x = Math.max(0, Math.min(state.width - 1, x));
+    y = Math.max(0, Math.min(state.height - 1, y));
+    return [x, y];
+  }
+
+  var painting = false;
+  ovCv.addEventListener('pointerdown', function(ev){
+    if (!state.img) return;
+    ev.preventDefault();
+    ovCv.setPointerCapture(ev.pointerId);
+    painting = true;
+    var p = pick(ev);
+    if (state.tool === 'measure'){
+      if (!state.curSeg) state.curSeg = [p[0], p[1], p[0], p[1]];
+      else { state.seg.push(state.curSeg); state.curSeg = null; drawOverlay(); }
+    } else if (state.tool === 'erase'){
+      eraseAt(p[0], p[1]);
+    }
+  });
+  ovCv.addEventListener('pointermove', function(ev){
+    if (!state.img) return;
+    var p = pick(ev);
+    if (state.tool === 'measure' && state.curSeg){
+      state.curSeg[2] = p[0]; state.curSeg[3] = p[1]; drawOverlay();
+    } else if (state.tool === 'erase' && painting){
+      eraseAt(p[0], p[1]);
+    }
+  });
+  function endDrag(){ painting = false; }
+  ovCv.addEventListener('pointerup', endDrag);
+  ovCv.addEventListener('pointercancel', endDrag);
+  ovCv.addEventListener('dblclick', function(){
+    state.seg = []; state.curSeg = null; drawOverlay(); setTool('none');
+  });
+
+  function eraseAt(x, y){
+    state.dirty = true;
+    var R = Math.max(1, parseInt(brush.value, 10) || 8);
+    var v = (state.info && state.info.negate !== 0) ? 0 : 255;
+    mctx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+    mctx.beginPath();
+    mctx.arc(x, y, R, 0, Math.PI * 2);
+    mctx.fill();
+  }
+
+  // ---------- 文件加载 ----------
+  function readFile(file, asText){
+    return new Promise(function(resolve, reject){
+      var rd = new FileReader();
+      rd.onload = function(){ resolve(rd.result); };
+      rd.onerror = function(){ reject(new Error('读取 ' + file.name + ' 失败')); };
+      if (asText) rd.readAsText(file, 'utf-8');
+      else rd.readAsArrayBuffer(file);
+    });
+  }
+
+  async function loadFiles(files){
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var pgmFile = null, yamlFile = null;
+    list.forEach(function(f){
+      if (/\.pgm$/i.test(f.name)) { if (!pgmFile) pgmFile = f; }
+      else if (/\.(yaml|yml)$/i.test(f.name)) { if (!yamlFile) yamlFile = f; }
+    });
+    if (!pgmFile) { toast('请同时选择 .pgm 文件（可搭配同名 .yaml）'); return; }
+
+    state.loading = true;
+    meta.textContent = '正在解析 ' + pgmFile.name + ' …';
+    try {
+      var pgmBuf = new Uint8Array(await readFile(pgmFile, false));
+      var gray = decodePGM(pgmBuf);
+      var srcCanvas = grayToCanvas(gray);
+
+      var info = null;
+      if (yamlFile) info = parseYAML(await readFile(yamlFile, true));
+
+      state.width = gray.width;
+      state.height = gray.height;
+      state.info = info;
+      state.baseName = info && info.image
+        ? info.image.replace(/\.[^.]+$/, '')
+        : pgmFile.name.replace(/\.[^.]+$/, '');
+      state.img = srcCanvas;
+      state.seg = []; state.curSeg = null; state.dirty = false;
+
+      emptyState.style.display = 'none';
+      wrap.style.display = 'block';
+      [btnM, btnE, btnSave].forEach(function(b){ b.disabled = false; });
+
+      var resTxt = metric()
+        ? (info.resolution + ' m/px · ' + (state.width * info.resolution).toFixed(1) + ' x ' +
+           (state.height * info.resolution).toFixed(1) + ' m')
+        : '无 .yaml，仅预览 / 擦除 / 下载';
+      meta.textContent = state.baseName + ' · ' + state.width + 'x' + state.height + ' px · ' + resTxt;
+
+      fit(true);
+      if (!metric()){
+        btnM.disabled = true;
+        btnM.title = '缺少 .yaml（resolution），无法换算真实尺寸';
+      } else {
+        btnM.disabled = false;
+        btnM.title = '点击两次测量两点直线距离';
+      }
+      if (!tip.parentNode) $('stage').appendChild(tip);
+      setTool('none');
+      toast('已打开 ' + pgmFile.name + (yamlFile ? ' + ' + yamlFile.name : ''));
+    } catch (err) {
+      meta.textContent = '未加载地图';
+      toast('打开失败：' + err.message);
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  // ---------- 保存 ----------
+  function trigger(name, blob){
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 800);
+  }
+
+  function saveMap(){
+    if (!state.img) return;
+    var base = state.baseName + '_edited';
+    var fname = base + '.pgm';
+    var px = mctx.getImageData(0, 0, state.width, state.height).data;
+    var head = 'P5\n# edited with PromptMerger Viewer\n' + state.width + ' ' + state.height + '\n255\n';
+    var bytes = new Uint8Array(head.length + state.width * state.height);
+    for (var k = 0; k < head.length; k++) bytes[k] = head.charCodeAt(k) & 0xff;
+    for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = px[i * 4];
+    trigger(fname, new Blob([bytes], { type: 'image/x-portable-anymap' }));
+    if (state.info && state.info.raw){
+      var yaml = state.info.raw.replace(/^([ \t]*image[ \t]*:).*$/m, '$1 ' + fname);
+      trigger(base + '.yaml', new Blob([yaml], { type: 'text/yaml' }));
+    }
+    toast('已下载 ' + fname + (state.info && state.info.raw ? ' 与 ' + base + '.yaml' : ''));
+  }
+
+  // ---------- 事件 ----------
+  btnM.onclick = function(){ setTool(state.tool === 'measure' ? 'none' : 'measure'); };
+  btnE.onclick = function(){ setTool(state.tool === 'erase' ? 'none' : 'erase'); };
+  btnSave.onclick = saveMap;
+  $('openBtn').onclick = function(){ fileInput.click(); };
+  $('openBtn2').onclick = function(){ fileInput.click(); };
+  fileInput.addEventListener('change', function(){
+    var files = fileInput.files;
+    fileInput.value = '';
+    loadFiles(files);
+  });
+
+  var dragDepth = 0;
+  window.addEventListener('dragenter', function(e){
+    e.preventDefault(); dragDepth++; $('drop').classList.add('on');
+  });
+  window.addEventListener('dragover', function(e){
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', function(e){
+    e.preventDefault(); dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) $('drop').classList.remove('on');
+  });
+  window.addEventListener('drop', function(e){
+    e.preventDefault(); dragDepth = 0; $('drop').classList.remove('on');
+    loadFiles(e.dataTransfer && e.dataTransfer.files);
+  });
+  window.addEventListener('resize', function(){ if (state.img && !state.loading) fit(false); });
+})();
+</script>
+</body>
+</html>

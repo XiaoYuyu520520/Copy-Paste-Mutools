@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown 实时预览 · 在线工具</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="assets/github-markdown-light.min.css" id="mdLight">
+<link rel="stylesheet" href="assets/github-markdown-dark.min.css" id="mdDark" disabled>
+<link rel="stylesheet" href="assets/github.min.css" id="hlLight">
+<link rel="stylesheet" href="assets/github-dark.min.css" id="hlDark" disabled>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --border:#d1d9e0; --panel:#f6f8fa;
+  --btn:#ffffff; --btn-hover:#eef1f4; --accent:#0969da; --shadow:rgba(31,35,40,.18);
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#30363d; --panel:#161b22;
+  --btn:#21262d; --btn-hover:#30363d; --accent:#1f6feb; --shadow:rgba(1,4,9,.6);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{display:flex;flex-direction:column;background:var(--bg);color:var(--fg);overflow:hidden;
+  font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font:inherit;cursor:pointer;background:var(--btn);color:var(--fg);
+  border:1px solid var(--border);border-radius:6px;padding:4px 10px}
+button:hover{background:var(--btn-hover)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+#top{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  padding:7px 12px;background:var(--panel);border-bottom:1px solid var(--border)}
+#top .title{font-weight:700}
+#top .sp{flex:1}
+#info{color:var(--muted);font-size:12px;max-width:36vw;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.seg{display:inline-flex}
+.seg button{border-radius:0}
+.seg button:first-child{border-radius:6px 0 0 6px}
+.seg button:last-child{border-radius:0 6px 6px 0;border-left:0}
+
+#body{flex:1 1 auto;min-height:0;display:flex}
+#edit{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)}
+#src{flex:1;resize:none;border:0;outline:none;padding:14px;background:var(--panel);color:var(--fg);
+  font:13px/1.7 ui-monospace,"Cascadia Mono",Consolas,monospace}
+#stat{padding:4px 12px;color:var(--muted);font-size:12px;border-top:1px solid var(--border);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#preview{position:relative;flex:1 1 auto;min-width:0;overflow:auto;background:var(--bg)}
+body[data-view="render"] #edit{display:none}
+body[data-view="split"] #edit{flex:0 0 50%}
+
+#out{max-width:none;margin:0;padding:18px 30px 140px}
+#out pre{position:relative}
+#out pre code.hljs{background:transparent;padding-right:64px}
+#out .err{color:#d1242f}
+.copy{position:absolute;top:8px;right:8px;opacity:0;transition:opacity .15s;font-size:12px;padding:2px 8px}
+#out pre:hover .copy{opacity:1}
+.copy.ok{opacity:1;color:#1a7f37;border-color:#1a7f37}
+
+#empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);padding:16px}
+#empty .card{border:2px dashed var(--border);border-radius:14px;padding:32px 40px;
+  text-align:center;max-width:640px}
+#empty .big{font-size:20px;font-weight:700;margin-bottom:12px}
+#empty .sub{color:var(--muted);font-size:13px;line-height:1.9;margin-bottom:18px}
+#empty .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+
+#drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:30;
+  background:rgba(9,105,218,.14);border:3px dashed var(--accent)}
+#drop.on{display:flex}
+#drop .hint{background:var(--accent);color:#fff;padding:10px 22px;border-radius:999px;font-weight:700}
+#toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;z-index:40;
+  pointer-events:none;transition:opacity .2s,transform .2s;background:var(--panel);color:var(--fg);
+  border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:13px;
+  box-shadow:0 6px 20px var(--shadow);max-width:70vw}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media print{
+  #top,#edit,#drop,#empty,#toast{display:none!important}
+  body{overflow:visible;background:#fff;color:#000}
+  #body{display:block}
+  #preview{overflow:visible}
+  #out{padding:0}
+}
+</style>
+</head>
+<body data-view="render">
+<div id="top">
+  <span class="title">Markdown 实时预览</span>
+  <span id="info">未打开文件 · 拖入或粘贴 Markdown</span>
+  <span class="sp"></span>
+  <span class="seg">
+    <button id="btnRender" class="on" title="只显示渲染结果（Ctrl+E 切换）">全屏渲染</button>
+    <button id="btnSplit" title="左源码 / 右预览（Ctrl+E 切换）">左右对照</button>
+  </span>
+  <button id="btnTheme" title="切换亮色 / 夜间（Ctrl+D）">🌙 夜间</button>
+  <button id="btnOpen" title="打开 .md/.txt（Ctrl+O）">打开文件…</button>
+  <button id="btnClear">清空</button>
+  <button id="btnPrint" title="打印 / 导出 PDF">打印</button>
+  <a href="mapview.html" style="font-size:13px;padding:4px 8px">2D 激光地图 →</a>
+  <a href="../index.html" style="font-size:13px;padding:4px 8px">← 工具首页</a>
+  <input id="file" type="file" multiple hidden accept=".md,.markdown,.mdown,.txt,.text,.log">
+</div>
+
+<div id="body">
+  <div id="edit">
+    <textarea id="src" spellcheck="false"
+      placeholder="把 README 拖到这里，或直接粘贴 Markdown&#10;（Ctrl+E 切换左右对照）"></textarea>
+    <div id="stat">等待输入</div>
+  </div>
+  <div id="preview">
+    <article id="out" class="markdown-body"></article>
+    <div id="empty">
+      <div class="card">
+        <div class="big">把 Markdown 拖到这里</div>
+        <div class="sub">
+          .md / .markdown / .txt 松手即渲染，GitHub 风格 + 代码高亮；<br>
+          全部在浏览器本地完成，不上传文件。
+        </div>
+        <div class="row">
+          <button id="btnOpen2">打开文件…</button>
+          <button id="btnPaste">粘贴 Markdown</button>
+          <a href="mapview.html" style="padding:4px 10px">打开地图编辑器 →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="drop"><div class="hint">松手即渲染</div></div>
+<div id="toast"></div>
+
+<script src="assets/marked.min.js"></script>
+<script src="assets/highlight.min.js"></script>
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+  var els = {
+    src:$('src'), out:$('out'), stat:$('stat'), info:$('info'), empty:$('empty'),
+    drop:$('drop'), toast:$('toast'), file:$('file'), theme:$('btnTheme'),
+    btnRender:$('btnRender'), btnSplit:$('btnSplit')
+  };
+  var state = { name:'', dirty:false, theme:'light', view:'render' };
+  var KEY = { theme:'md.theme', view:'md.view' };
+  var timer = null, toastTimer = null;
+
+  function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function lsSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+
+  function toast(msg){
+    els.toast.textContent = msg;
+    els.toast.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ els.toast.classList.remove('on'); }, 2800);
+  }
+
+  function applyTheme(theme, persist){
+    state.theme = theme === 'dark' ? 'dark' : 'light';
+    var dark = state.theme === 'dark';
+    document.documentElement.setAttribute('data-theme', state.theme);
+    $('mdLight').disabled = dark;
+    $('mdDark').disabled = !dark;
+    $('hlLight').disabled = dark;
+    $('hlDark').disabled = !dark;
+    els.theme.textContent = dark ? '☀️ 日间' : '🌙 夜间';
+    if (persist) lsSet(KEY.theme, state.theme);
+    if (els.src.value) render();
+  }
+  function toggleTheme(){ applyTheme(state.theme === 'dark' ? 'light' : 'dark', true); }
+
+  function applyView(view, persist){
+    state.view = view === 'split' ? 'split' : 'render';
+    document.body.setAttribute('data-view', state.view);
+    els.btnRender.classList.toggle('on', state.view === 'render');
+    els.btnSplit.classList.toggle('on', state.view === 'split');
+    if (persist) lsSet(KEY.view, state.view);
+    if (state.view === 'render') decorateAll();
+  }
+  function toggleView(){ applyView(state.view === 'split' ? 'render' : 'split', true); }
+
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+
+  // 轻量消毒：保留 GitHub 渲染结果，去掉脚本/事件属性/javascript: 链接
+  function sanitize(html){
+    var tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll('script,iframe,object,embed,form,link,meta,style,base').forEach(function(n){ n.remove(); });
+    tpl.content.querySelectorAll('*').forEach(function(n){
+      Array.prototype.slice.call(n.attributes).forEach(function(a){
+        var name = a.name.toLowerCase();
+        if (name.indexOf('on') === 0) { n.removeAttribute(a.name); return; }
+        if ((name === 'href' || name === 'src' || name === 'xlink:href') &&
+            /^\s*(javascript|data:text\/html)/i.test(a.value)) {
+          n.removeAttribute(a.name);
+        }
+      });
+    });
+    return tpl.innerHTML;
+  }
+
+  function copyText(text, btn){
+    var done = function(){
+      btn.textContent = '已复制 ✓'; btn.classList.add('ok');
+      setTimeout(function(){ btn.textContent = '复制'; btn.classList.remove('ok'); }, 1200);
+    };
+    var fail = function(){ toast('复制失败，请手动选择'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function(){ fallbackCopy(text, done, fail); });
+    } else {
+      fallbackCopy(text, done, fail);
+    }
+  }
+  function fallbackCopy(text, done, fail){
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){ if (fail) fail(); }
+    document.body.removeChild(ta);
+  }
+
+  function decorate(box){
+    box.querySelectorAll('pre').forEach(function(pre){
+      var code = pre.querySelector('code');
+      if (!code) return;
+      if (window.hljs) { try { hljs.highlightElement(code); } catch(e){} }
+      if (pre.querySelector('.copy')) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy';
+      btn.textContent = '复制';
+      btn.onclick = function(){ copyText(code.innerText, btn); };
+      pre.appendChild(btn);
+    });
+  }
+  function decorateAll(){ decorate(els.out); }
+
+  function render(){
+    var text = els.src.value;
+    if (typeof marked === 'undefined') {
+      els.out.innerHTML = '<p class="err">marked 未加载，无法渲染。</p>';
+      return;
+    }
+    try {
+      els.out.innerHTML = sanitize(marked.parse(text, { gfm:true, breaks:false }));
+    } catch(e) {
+      els.out.innerHTML = '<p class="err">渲染出错：' + esc(e.message) + '</p>';
+    }
+    decorate(els.out);
+    var lines = text === '' ? 0 : text.split(/\n/).length;
+    els.stat.textContent = (state.name ? state.name + ' · ' : '') + lines + ' 行 · ' + text.length + ' 字符';
+  }
+
+  function showEmpty(){
+    state.name = ''; state.dirty = false;
+    els.src.value = ''; els.out.innerHTML = '';
+    els.info.textContent = '未打开文件 · 拖入或粘贴 Markdown';
+    els.empty.style.display = 'flex';
+    els.stat.textContent = '等待输入';
+  }
+
+  function setMarkdown(name, text){
+    state.name = name || ''; state.dirty = false;
+    els.src.value = text || '';
+    els.empty.style.display = 'none';
+    els.info.textContent = (name || '未命名文档') + ' · 已渲染';
+    applyView('render', false);
+    render();
+  }
+
+  function fileKind(name){
+    if (/\.pgm$/i.test(name)) return 'pgm';
+    if (/\.(yaml|yml)$/i.test(name)) return 'yaml';
+    if (/\.(md|markdown|mdown|txt|text|log)$/i.test(name)) return 'md';
+    return 'other';
+  }
+
+  function handleFiles(files){
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var md = null, other = null, mapFile = null;
+    list.forEach(function(f){
+      var k = fileKind(f.name);
+      if (k === 'md') { if (!md) md = f; }
+      else if (k === 'pgm' || k === 'yaml') { if (!mapFile) mapFile = f; }
+      else if (!other) other = f;
+    });
+    if (md) { readLocal(md); return; }
+    if (mapFile) { toast('地图文件请用「2D 激光地图」工具打开'); return; }
+    toast('不支持的文件类型：' + (other ? other.name : '未知'));
+  }
+
+  function readLocal(file){
+    var rd = new FileReader();
+    rd.onload = function(){
+      setMarkdown(file.name, String(rd.result || ''));
+      toast('已载入 ' + file.name);
+    };
+    rd.onerror = function(){ toast('读取 ' + file.name + ' 失败'); };
+    rd.readAsText(file, 'utf-8');
+  }
+
+  var dragDepth = 0;
+  window.addEventListener('dragenter', function(e){
+    e.preventDefault(); dragDepth++; els.drop.classList.add('on');
+  });
+  window.addEventListener('dragover', function(e){
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  window.addEventListener('dragleave', function(e){
+    e.preventDefault(); dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) els.drop.classList.remove('on');
+  });
+  window.addEventListener('drop', function(e){
+    e.preventDefault(); dragDepth = 0; els.drop.classList.remove('on');
+    handleFiles(e.dataTransfer && e.dataTransfer.files);
+  });
+
+  els.src.addEventListener('input', function(){
+    state.dirty = true;
+    clearTimeout(timer);
+    timer = setTimeout(render, 220);
+  });
+  els.btnRender.onclick = function(){ applyView('render', true); };
+  els.btnSplit.onclick = function(){ applyView('split', true); };
+  els.theme.onclick = toggleTheme;
+  $('btnOpen').onclick = function(){ els.file.click(); };
+  $('btnOpen2').onclick = function(){ els.file.click(); };
+  $('btnPaste').onclick = function(){ applyView('split', true); els.src.focus(); };
+  $('btnClear').onclick = function(){ showEmpty(); toast('已清空'); };
+  $('btnPrint').onclick = function(){ window.print(); };
+  els.file.addEventListener('change', function(){
+    var files = els.file.files;
+    els.file.value = '';
+    handleFiles(files);
+  });
+  window.addEventListener('keydown', function(e){
+    if (!(e.ctrlKey || e.metaKey)) {
+      if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
+      return;
+    }
+    var k = (e.key || '').toLowerCase();
+    if (k === 'e') { e.preventDefault(); toggleView(); }
+    else if (k === 'd') { e.preventDefault(); toggleTheme(); }
+    else if (k === 'o') { e.preventDefault(); els.file.click(); }
+  });
+
+  var savedTheme = lsGet(KEY.theme);
+  if (!savedTheme) {
+    savedTheme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  applyTheme(savedTheme, false);
+  applyView(lsGet(KEY.view) || 'render', false);
+  showEmpty();
+})();
+</script>
+</body>
+</html>

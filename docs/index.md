@@ -37,6 +37,8 @@
 | **[Base64 编解码](tools/base64.html)** | UTF-8 文本 / URL-safe / 文件转 Base64，纯本地处理 |
 | **[二维码生成器](tools/qrcode.html)** | 文本 / 网址即时生成，支持下载 PNG、SVG |
 | **[浏览器编解码检测](tools/codec.html)** | 检测 H.264 / HEVC / AV1 / VP9 / AAC / Opus 等支持情况 |
+| **[Markdown 实时预览](tools/markdown.html)** | GitHub 风格渲染、代码高亮、亮暗主题、左右对照 |
+| **[2D 激光地图](tools/mapview.html)** | 打开 .pgm + .yaml，比例尺、测距、擦除、导出 |
 
 ---
 
