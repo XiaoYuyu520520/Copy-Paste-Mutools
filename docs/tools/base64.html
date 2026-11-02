@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Base64 编解码 · 在线工具</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="top">
+    <span class="brand">提示词复合工具箱 · 在线工具</span>
+    <a href="../index.html">文档首页</a>
+    <a href="base64.html" class="active">Base64</a>
+    <a href="qrcode.html">二维码</a>
+    <a href="codec.html">编解码检测</a>
+  </nav>
+
+  <h1>Base64 编解码</h1>
+  <p class="sub">支持 UTF-8 中文、URL-safe 变体、二进制文件转 Base64，全部在本地浏览器完成，不上传任何数据。</p>
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label class="field" for="input">输入</label>
+        <textarea id="input" placeholder="要编码的文本，或要解码的 Base64…" spellcheck="false"></textarea>
+      </div>
+      <div>
+        <label class="field" for="output">输出</label>
+        <textarea id="output" placeholder="结果会显示在这里…" spellcheck="false" readonly></textarea>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button id="btnEncode">编码 →</button>
+      <button id="btnDecode">← 解码</button>
+      <button class="ghost" id="btnSwap">交换</button>
+      <button class="ghost" id="btnCopy">复制输出</button>
+      <button class="ghost" id="btnClear">清空</button>
+    </div>
+
+    <div class="row" style="margin-bottom:14px">
+      <label class="col hint"><input type="checkbox" id="optUrlSafe"> URL-safe（<code>+ /</code> → <code>- _</code>，去掉 <code>=</code>）</label>
+      <label class="col hint"><input type="checkbox" id="optWrap"> 编码结果每 76 字符换行</label>
+      <label class="col hint"><input type="checkbox" id="optIgnoreWs" checked> 解码时忽略空白字符</label>
+    </div>
+
+    <div class="row">
+      <div class="col">
+        <label class="field" for="file">文件转 Base64（可选，适合小文件）</label>
+        <input type="file" id="file" style="color:var(--muted)">
+      </div>
+      <div class="col">
+        <button class="ghost" id="btnFileToB64">读取文件并编码</button>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">说明</h2>
+    <ul class="hint" style="margin:0;padding-left:20px">
+      <li>编码：文本先按 UTF-8 转字节，再做 Base64，因此中文/emoji 不会乱码。</li>
+      <li>解码：先按 Base64 还原字节，再按 UTF-8 解码；二进制内容会显示为替换字符。</li>
+      <li>URL-safe（RFC 4648 §5）常用于 JWT、URL 参数。</li>
+      <li>大文件建议使用命令行：<code>base64 -w0 file.bin</code>。</li>
+    </ul>
+  </div>
+
+  <footer>Made with ❤️ by <a href="https://github.com/XiaoYuyu520520">XiaoYuyu520520</a> · MIT License</footer>
+</div>
+
+<script src="common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const input = $("input");
+const output = $("output");
+const urlSafe = $("optUrlSafe");
+const wrap = $("optWrap");
+const ignoreWs = $("optIgnoreWs");
+
+const B64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(text, ignoreWhitespace) {
+  let s = text;
+  if (ignoreWhitespace) s = s.replace(/\s+/g, "");
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = s.length % 4;
+  if (pad === 2) s += "==";
+  else if (pad === 3) s += "=";
+  else if (pad === 1) throw new Error("Base64 长度不合法");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) throw new Error("包含非 Base64 字符");
+
+  const binary = atob(s);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function toUrlSafe(b64) {
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function chunkLines(s, width) {
+  const out = [];
+  for (let i = 0; i < s.length; i += width) out.push(s.slice(i, i + width));
+  return out.join("\n");
+}
+
+function encode() {
+  const text = input.value;
+  try {
+    const bytes = new TextEncoder().encode(text);
+    let b64 = bytesToBase64(bytes);
+    if (urlSafe.checked) b64 = toUrlSafe(b64);
+    if (wrap.checked && !urlSafe.checked) b64 = chunkLines(b64, 76);
+    output.value = b64;
+    setStatus("编码完成 · " + bytes.length + " 字节 → " + output.value.length + " 字符", "ok");
+  } catch (err) {
+    setStatus("编码失败：" + err.message, "err");
+  }
+}
+
+function decode() {
+  try {
+    const bytes = base64ToBytes(input.value, ignoreWs.checked);
+    output.value = new TextDecoder("utf-8").decode(bytes);
+    setStatus("解码完成 · " + bytes.length + " 字节", "ok");
+  } catch (err) {
+    setStatus("解码失败：" + err.message, "err");
+  }
+}
+
+$("btnEncode").addEventListener("click", encode);
+$("btnDecode").addEventListener("click", decode);
+$("btnSwap").addEventListener("click", () => {
+  const a = input.value;
+  input.value = output.value;
+  output.value = a;
+  setStatus("已交换输入与输出");
+});
+$("btnCopy").addEventListener("click", () => {
+  if (!output.value) return setStatus("输出为空", "err");
+  copyText(output.value);
+});
+$("btnClear").addEventListener("click", () => {
+  input.value = "";
+  output.value = "";
+  setStatus("");
+});
+$("btnFileToB64").addEventListener("click", () => {
+  const f = $("file").files[0];
+  if (!f) return setStatus("请先选择一个文件", "err");
+  const reader = new FileReader();
+  reader.onload = () => {
+    const bytes = new Uint8Array(reader.result);
+    let b64 = bytesToBase64(bytes);
+    if (urlSafe.checked) b64 = toUrlSafe(b64);
+    if (wrap.checked && !urlSafe.checked) b64 = chunkLines(b64, 76);
+    output.value = b64;
+    setStatus("文件已编码：" + f.name + " · " + bytes.length + " 字节", "ok");
+  };
+  reader.onerror = () => setStatus("读取文件失败", "err");
+  reader.readAsArrayBuffer(f);
+});
+
+input.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    encode();
+  }
+});
+</script>
+</body>
+</html>

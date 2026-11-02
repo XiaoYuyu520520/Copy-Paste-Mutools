@@ -30,6 +30,16 @@
 
 ---
 
+## 🧪 在线工具
+
+| 工具 | 说明 |
+| --- | --- |
+| **[Base64 编解码](tools/base64.html)** | UTF-8 文本 / URL-safe / 文件转 Base64，纯本地处理 |
+| **[二维码生成器](tools/qrcode.html)** | 文本 / 网址即时生成，支持下载 PNG、SVG |
+| **[浏览器编解码检测](tools/codec.html)** | 检测 H.264 / HEVC / AV1 / VP9 / AAC / Opus 等支持情况 |
+
+---
+
 ## 🎯 按场景找答案
 
 | 我想… | 去这里 |
