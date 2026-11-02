@@ -56,10 +56,18 @@ type Server struct {
 	scanDefaults ScanDefaults
 	sessions     sync.Map // id(string) -> *Session
 
+	// sessionTTL 是会话在结束后保留的时长；超过且无人订阅时会被清理。
+	sessionTTL time.Duration
+	cleanOnce  sync.Once
+	stopClean  chan struct{}
+
 	prefsMu   sync.Mutex
 	prefsPath string
 	prefs     map[string]any
 }
+
+// DefaultSessionTTL 是扫描会话的默认保留时长。
+const DefaultSessionTTL = 30 * time.Minute
 
 // New 构造 Server。webFS 需包含 index.html / style.css / app.js。
 func New(webFS fs.FS, defaults ScanDefaults) *Server {
@@ -67,14 +75,37 @@ func New(webFS fs.FS, defaults ScanDefaults) *Server {
 		webFS:        webFS,
 		mux:          http.NewServeMux(),
 		scanDefaults: defaults,
+		sessionTTL:   DefaultSessionTTL,
+		stopClean:    make(chan struct{}),
 	}
 	s.routes()
 	return s
 }
 
+// SetSessionTTL 设置已结束后会话的保留时长（<=0 表示用默认值）。
+func (s *Server) SetSessionTTL(d time.Duration) {
+	s.prefsMu.Lock()
+	if d <= 0 {
+		d = DefaultSessionTTL
+	}
+	s.sessionTTL = d
+	s.prefsMu.Unlock()
+}
+
 // Handler 返回可直接交给 http.Server 的路由。
 func (s *Server) Handler() http.Handler {
+	s.cleanOnce.Do(func() { go s.cleanupLoop() })
 	return s.mux
+}
+
+// Close 停止后台清理并取消所有会话。可安全重复调用。
+func (s *Server) Close() {
+	s.CancelAll()
+	select {
+	case <-s.stopClean:
+	default:
+		close(s.stopClean)
+	}
 }
 
 // CancelAll 取消并关闭所有仍在进行的扫描会话（窗口退出/停止服务时调用）。
@@ -82,6 +113,61 @@ func (s *Server) CancelAll() {
 	s.sessions.Range(func(_, v any) bool {
 		if sess, ok := v.(*Session); ok {
 			sess.Close()
+		}
+		return true
+	})
+}
+
+// cleanupLoop 周期性清理过期会话。
+func (s *Server) cleanupLoop() {
+	// 清理间隔取 TTL/4，夹在 [5s, 1min] 之间，避免过频或过疏。
+	ticker := time.NewTicker(s.cleanInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopClean:
+			return
+		case <-ticker.C:
+			s.purgeExpired()
+		}
+	}
+}
+
+func (s *Server) cleanInterval() time.Duration {
+	s.prefsMu.Lock()
+	ttl := s.sessionTTL
+	s.prefsMu.Unlock()
+	d := ttl / 4
+	if d < 5*time.Second {
+		d = 5 * time.Second
+	}
+	if d > time.Minute {
+		d = time.Minute
+	}
+	return d
+}
+
+// purgeExpired 删除已结束且空闲（无订阅者）超过 TTL 的会话。
+func (s *Server) purgeExpired() {
+	s.prefsMu.Lock()
+	ttl := s.sessionTTL
+	s.prefsMu.Unlock()
+
+	now := time.Now()
+	s.sessions.Range(func(k, v any) bool {
+		sess, ok := v.(*Session)
+		if !ok {
+			return true
+		}
+		if sess.Status() == "running" {
+			return true
+		}
+		if sess.Subscribers() > 0 {
+			return true
+		}
+		if now.Sub(sess.FinishedAt()) >= ttl {
+			sess.Close()
+			s.sessions.Delete(k)
 		}
 		return true
 	})
@@ -216,6 +302,7 @@ func (s *Server) handleScanStart(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
+	s.purgeExpired()
 	var req ScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("请求体解析失败: %w", err))
@@ -284,6 +371,7 @@ func (s *Server) handleScanByID(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
+	s.purgeExpired()
 	v, ok := s.sessions.Load(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("扫描不存在或已过期"))
@@ -335,7 +423,8 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, sess *Sess
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	ctx := r.Context()
-	ch := sess.Subscribe()
+	ch, unsub := sess.Subscribe()
+	defer unsub()
 
 	if snap := sess.Snapshot(); snap != nil {
 		writeSSE(w, "snapshot", snap)
@@ -498,7 +587,7 @@ type Session struct {
 	summary  netscan.Summary
 	errMsg   string
 	subMu    sync.Mutex
-	subs     []chan netscan.Event
+	subs     map[chan netscan.Event]struct{}
 	cancel   context.CancelFunc
 	ctx      context.Context
 	doneOnce sync.Once
@@ -528,6 +617,7 @@ func newSession(req ScanRequest, opts netscan.Options) *Session {
 		status:    "running",
 		start:     time.Now(),
 		hosts:     make(map[string]*netscan.Host),
+		subs:      make(map[chan netscan.Event]struct{}),
 		ctx:       ctx,
 		cancel:    cancel,
 		closed:    make(chan struct{}),
@@ -603,30 +693,66 @@ func (s *Session) Close() {
 		s.mu.Lock()
 		if s.status == "running" {
 			s.status = "cancelled"
+			s.finish = time.Now()
 		}
 		s.cancel()
 		s.mu.Unlock()
 		s.subMu.Lock()
-		for _, ch := range s.subs {
+		for ch := range s.subs {
 			close(ch)
 		}
-		s.subs = nil
-		s.subMu.Unlock()
+		s.subs = make(map[chan netscan.Event]struct{})
+		// 在同一把锁内关闭 closed，避免 Subscribe 在清理后、关闭前插入新订阅。
 		close(s.closed)
+		s.subMu.Unlock()
 	})
 }
 
-func (s *Session) Subscribe() <-chan netscan.Event {
+// Subscribe 注册一个事件订阅者，返回只读频道与注销函数。
+//
+// 注销函数必须被调用（通常在 SSE 处理函数里 defer），否则过期清理
+// 会一直认为会话“有人观看”而不回收。会话已关闭时返回已关闭的频道。
+func (s *Session) Subscribe() (<-chan netscan.Event, func()) {
 	ch := make(chan netscan.Event, 64)
 	s.subMu.Lock()
-	s.subs = append(s.subs, ch)
+	select {
+	case <-s.closed:
+		s.subMu.Unlock()
+		close(ch)
+		return ch, func() {}
+	default:
+	}
+	s.subs[ch] = struct{}{}
 	s.subMu.Unlock()
-	return ch
+
+	unsub := func() {
+		s.subMu.Lock()
+		if _, ok := s.subs[ch]; ok {
+			delete(s.subs, ch)
+			close(ch)
+		}
+		s.subMu.Unlock()
+	}
+	return ch, unsub
+}
+
+// Subscribers 返回当前订阅者数量。
+func (s *Session) Subscribers() int {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	return len(s.subs)
+}
+
+// FinishedAt 返回会话结束时间（未结束为零值）。
+func (s *Session) FinishedAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.finish
 }
 
 func (s *Session) broadcastAll(ev netscan.Event) {
 	s.subMu.Lock()
-	for _, ch := range s.subs {
+	for ch := range s.subs {
 		select {
 		case ch <- ev:
 		default:

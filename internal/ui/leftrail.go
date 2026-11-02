@@ -26,6 +26,7 @@ type LeftRail struct {
 
 	root fyne.CanvasObject
 	rows []*leftRailRow
+	box  *fyne.Container
 }
 
 // leftRailRow 单个导航项：
@@ -75,6 +76,7 @@ func NewLeftRailWithIcons(items []string, icons []fyne.Resource, onSelect func(i
 	}
 
 	body := container.NewBorder(header, nil, nil, nil, container.NewPadded(rowBox))
+	r.box = rowBox
 	r.root = body
 	r.refresh()
 	return r
@@ -221,6 +223,23 @@ func (l *leftRailRowLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) 
 
 // View 返回根容器。
 func (r *LeftRail) View() fyne.CanvasObject { return r.root }
+
+// HideRow 移除某一项（例如当前平台不支持的功能），索引用于回调时保持不变。
+func (r *LeftRail) HideRow(i int) {
+	if i < 0 || i >= len(r.rows) {
+		return
+	}
+	r.box.Remove(r.rows[i].root)
+	r.root.Refresh()
+	if r.selected == i {
+		for j := range r.rows {
+			if j != i {
+				r.Select(j)
+				break
+			}
+		}
+	}
+}
 
 // Select 程序化选中某项并刷新样式（不触发 onSelect）。
 func (r *LeftRail) Select(i int) {

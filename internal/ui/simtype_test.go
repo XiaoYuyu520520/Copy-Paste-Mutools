@@ -49,9 +49,29 @@ func TestPlanText_ReplaceSpace(t *testing.T) {
 }
 
 func TestPlanText_CRLFCollapsesToSingleBreak(t *testing.T) {
-	// \r\n 与连续空行只应产生一次 Enter，避免一次双击回车
-	keys := planText("A\r\n\n\nB", enterKeyModeSend)
+	// \r\n 是同一个换行，只产生一次 Enter
+	keys := planText("A\r\nB", enterKeyModeSend)
 	assertKinds(t, "crlf-collapse", keys, []simKeyKind{simKeyChar, simKeyEnter, simKeyChar})
+}
+
+func TestPlanText_PreservesBlankLines(t *testing.T) {
+	// 空行必须保留（用于代码/Markdown），不能被折叠
+	keys := planText("A\n\nB", enterKeyModeSend)
+	assertKinds(t, "blank-line", keys,
+		[]simKeyKind{simKeyChar, simKeyEnter, simKeyEnter, simKeyChar})
+
+	// CRLF 混合空行
+	keys = planText("A\r\n\r\nB", enterKeyModeSend)
+	assertKinds(t, "crlf-blank-line", keys,
+		[]simKeyKind{simKeyChar, simKeyEnter, simKeyEnter, simKeyChar})
+
+	// 以换行结尾的文本会保留末尾 Enter
+	keys = planText("A\n", enterKeyModeSend)
+	assertKinds(t, "trailing", keys, []simKeyKind{simKeyChar, simKeyEnter})
+
+	// 仅 \r（老式 Mac）也作为独立换行处理
+	keys = planText("A\rB", enterKeyModeSend)
+	assertKinds(t, "lone-cr", keys, []simKeyKind{simKeyChar, simKeyEnter, simKeyChar})
 }
 
 func TestPlanText_TabAndUnicode(t *testing.T) {

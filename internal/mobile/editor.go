@@ -105,12 +105,16 @@ func (p *editorPage) refreshTabs() {
 	for i := range cfg.Tabs {
 		names[i] = fmt.Sprintf("标签 %d", i+1)
 	}
+	if cfg.ActiveTab >= len(names) || cfg.ActiveTab < 0 {
+		p.store.Update(func(c *data.Config) { c.ActiveTab = 0 })
+	}
 	p.updating = true
 	p.select1.SetOptions(names)
-	if cfg.ActiveTab >= len(names) {
-		cfg.ActiveTab = 0
+	idx := p.store.Config().ActiveTab
+	if idx >= len(names) {
+		idx = 0
 	}
-	p.select1.SetSelectedIndex(cfg.ActiveTab)
+	p.select1.SetSelectedIndex(idx)
 	p.updating = false
 	p.loadTab()
 }
@@ -143,19 +147,25 @@ func (p *editorPage) onEdit(i int) {
 	if p.updating {
 		return
 	}
-	cfg := p.store.Config()
-	if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
-		return
-	}
-	tab := &cfg.Tabs[cfg.ActiveTab]
-	if i < len(tab.Prompts) {
-		tab.Prompts[i].Text = p.rows[i].promptText.Text
-		tab.Prompts[i].Enabled = p.rows[i].promptOn.Checked
-	}
-	if i < len(tab.Sentences) {
-		tab.Sentences[i].Text = p.rows[i].sentenceText.Text
-		tab.Sentences[i].Enabled = p.rows[i].sentenceOn.Checked
-	}
+	promptText := p.rows[i].promptText.Text
+	promptOn := p.rows[i].promptOn.Checked
+	sentenceText := p.rows[i].sentenceText.Text
+	sentenceOn := p.rows[i].sentenceOn.Checked
+
+	p.store.Update(func(cfg *data.Config) {
+		if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+			return
+		}
+		tab := &cfg.Tabs[cfg.ActiveTab]
+		if i < len(tab.Prompts) {
+			tab.Prompts[i].Text = promptText
+			tab.Prompts[i].Enabled = promptOn
+		}
+		if i < len(tab.Sentences) {
+			tab.Sentences[i].Text = sentenceText
+			tab.Sentences[i].Enabled = sentenceOn
+		}
+	})
 	p.store.SaveDebounced()
 	p.updatePreview()
 }
@@ -179,16 +189,17 @@ func (p *editorPage) onTabChanged() {
 	if idx < 0 {
 		return
 	}
-	p.store.Config().ActiveTab = idx
+	p.store.Update(func(cfg *data.Config) { cfg.ActiveTab = idx })
 	p.store.SaveDebounced()
 	p.loadTab()
 }
 
 // addTab 新建一个空标签。
 func (p *editorPage) addTab() {
-	cfg := p.store.Config()
-	cfg.Tabs = append(cfg.Tabs, blankTab())
-	cfg.ActiveTab = len(cfg.Tabs) - 1
+	p.store.Update(func(cfg *data.Config) {
+		cfg.Tabs = append(cfg.Tabs, blankTab())
+		cfg.ActiveTab = len(cfg.Tabs) - 1
+	})
 	p.store.SaveDebounced()
 	p.refreshTabs()
 }
@@ -202,29 +213,39 @@ func (p *editorPage) deleteTab() {
 		return
 	}
 	idx := cfg.ActiveTab
-	cfg.Tabs = append(cfg.Tabs[:idx], cfg.Tabs[idx+1:]...)
-	if cfg.ActiveTab >= len(cfg.Tabs) {
-		cfg.ActiveTab = len(cfg.Tabs) - 1
-	}
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
+			return
+		}
+		c.Tabs = append(c.Tabs[:idx], c.Tabs[idx+1:]...)
+		if c.ActiveTab >= len(c.Tabs) {
+			c.ActiveTab = len(c.Tabs) - 1
+		}
+	})
 	p.store.SaveDebounced()
 	p.refreshTabs()
 }
 
 // clearTab 清空当前标签的所有输入。
 func (p *editorPage) clearTab() {
-	cfg := p.store.Config()
-	if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+	cleared := false
+	p.store.Update(func(cfg *data.Config) {
+		if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+			return
+		}
+		cfg.Tabs[cfg.ActiveTab] = blankTab()
+		cleared = true
+	})
+	if !cleared {
 		return
 	}
-	cfg.Tabs[cfg.ActiveTab] = blankTab()
 
 	p.updating = true
-	for i, r := range p.rows {
+	for _, r := range p.rows {
 		r.promptText.SetText("")
 		r.sentenceText.SetText("")
 		r.promptOn.SetChecked(true)
 		r.sentenceOn.SetChecked(true)
-		_ = i
 	}
 	p.updating = false
 

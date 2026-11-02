@@ -49,11 +49,51 @@ func newStore(a fyne.App) *store {
 	return s
 }
 
-// Config 返回配置指针（调用方修改后应调用 Save 或 SaveDebounced）。
-func (s *store) Config() *data.Config {
+// Config 返回配置的深拷贝快照。
+//
+// 调用方对返回值的修改不会影响 store，避免解锁后继续改内部状态、
+// 或与定时保存并发读写同一份数据。
+func (s *store) Config() data.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return &s.cfg
+	return cloneConfig(s.cfg)
+}
+
+// Update 在锁内修改配置。回调里拿到的是内部配置，请只在回调内使用。
+func (s *store) Update(fn func(*data.Config)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	fn(&s.cfg)
+	s.mu.Unlock()
+}
+
+// AIConfig 返回 AI 配置快照（始终非 nil）。
+func (s *store) AIConfig() data.AIConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.AI == nil {
+		return data.AIConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}
+	}
+	return *s.cfg.AI
+}
+
+// cloneConfig 深拷贝配置，隔离切片与 AI 指针。
+func cloneConfig(c data.Config) data.Config {
+	out := c
+	out.Tabs = make([]data.TabConfig, len(c.Tabs))
+	for i, t := range c.Tabs {
+		out.Tabs[i] = data.TabConfig{
+			Prompts:   append([]data.Item(nil), t.Prompts...),
+			Sentences: append([]data.Item(nil), t.Sentences...),
+		}
+	}
+	if c.AI != nil {
+		ai := *c.AI
+		out.AI = &ai
+	}
+	return out
 }
 
 // Save 立即落盘。

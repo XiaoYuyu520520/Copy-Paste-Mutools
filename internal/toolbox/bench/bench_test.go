@@ -1,6 +1,9 @@
 package bench
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -101,5 +104,68 @@ func TestBytesPerSecond(t *testing.T) {
 	}
 	if got := bytesPerSecond(1024, 0); got != 0 {
 		t.Errorf("bytesPerSecond with zero duration = %v, want 0", got)
+	}
+}
+
+func TestRunDiskRefusesExistingFileWithoutOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "existing.bin")
+	original := []byte("珍贵数据，不能被截断")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := DefaultDiskOptions()
+	opts.FilePath = path
+	opts.SizeBytes = 1 << 20
+	opts.BlockBytes = 64 << 10
+
+	_, err := RunDisk(opts)
+	if !errors.Is(err, ErrFileExists) {
+		t.Fatalf("RunDisk err = %v, want ErrFileExists", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("原文件被修改: %q", got)
+	}
+}
+
+func TestRunDiskOverwriteExplicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "existing.bin")
+	if err := os.WriteFile(path, []byte("旧内容"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := DefaultDiskOptions()
+	opts.FilePath = path
+	opts.Overwrite = true
+	opts.KeepFile = true
+	opts.SizeBytes = 1 << 20
+	opts.BlockBytes = 64 << 10
+
+	res, err := RunDisk(opts)
+	if err != nil {
+		t.Fatalf("RunDisk: %v", err)
+	}
+	if res.WriteSpeed <= 0 || res.ReadSpeed <= 0 {
+		t.Fatalf("speed should be positive: %+v", res)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != opts.SizeBytes {
+		t.Fatalf("size = %d, want %d", info.Size(), opts.SizeBytes)
+	}
+}
+
+func TestDefaultDiskOptionsDoesNotDropCaches(t *testing.T) {
+	if DefaultDiskOptions().DropCaches {
+		t.Fatal("默认不应清除系统页缓存（会影响同机其他程序）")
 	}
 }

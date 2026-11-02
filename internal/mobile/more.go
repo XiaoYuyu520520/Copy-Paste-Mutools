@@ -56,10 +56,7 @@ func newMorePage(s *store, a fyne.App) *morePage {
 
 // aiSettings 返回 API 配置表单。
 func (p *morePage) aiSettings() fyne.CanvasObject {
-	if p.store.Config().AI == nil {
-		p.store.Config().AI = &data.AIConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}
-	}
-	cfg := p.store.Config().AI
+	cfg := p.store.AIConfig()
 
 	baseURL := widget.NewEntry()
 	baseURL.SetText(cfg.BaseURL)
@@ -81,10 +78,13 @@ func (p *morePage) aiSettings() fyne.CanvasObject {
 	status := widget.NewLabel("")
 
 	save := widget.NewButtonWithIcon("保存配置", theme.DocumentSaveIcon(), func() {
-		cfg.BaseURL = strings.TrimSpace(baseURL.Text)
-		cfg.APIKey = strings.TrimSpace(apiKey.Text)
-		cfg.Model = strings.TrimSpace(model.Text)
-		cfg.System = system.Text
+		newCfg := data.AIConfig{
+			BaseURL: strings.TrimSpace(baseURL.Text),
+			APIKey:  strings.TrimSpace(apiKey.Text),
+			Model:   strings.TrimSpace(model.Text),
+			System:  system.Text,
+		}
+		p.store.Update(func(c *data.Config) { c.AI = &newCfg })
 		if err := p.store.Save(); err != nil {
 			status.SetText("保存失败：" + err.Error())
 			return
@@ -165,7 +165,7 @@ func (p *morePage) services() fyne.CanvasObject {
 	})
 
 	return container.NewVBox(
-		widget.NewLabel("服务只在本机回环地址监听，供手机浏览器打开。"),
+		widget.NewLabel("服务只在手机本机回环（127.0.0.1）监听，供本机浏览器打开；\n暂不支持电脑访问手机，跨设备互传需要后续版本做局域网监听与配对。"),
 		container.NewGridWithColumns(3, startShare, startMonitor, startSpeed),
 		urlEntry, openBtn, stopBtn, status,
 	)

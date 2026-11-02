@@ -2,6 +2,7 @@ package bench
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,16 +22,20 @@ type DiskOptions struct {
 	BlockBytes int64
 	// KeepFile 为 true 时保留测试文件（用于排查）。
 	KeepFile bool
+	// Overwrite 为 true 时允许覆盖已存在的 FilePath。
+	// 默认 false：已存在则直接报错，避免误删用户数据。
+	Overwrite bool
 	// DropCaches 为 true 时尝试清除系统页缓存（仅 Linux，需 root）。
+	// 默认 false：清缓存会影响同机其他程序，必须显式开启。
 	DropCaches bool
 }
 
-// DefaultDiskOptions 返回默认磁盘测试参数：1 GiB 文件、64 MiB 块。
+// DefaultDiskOptions 返回默认磁盘测试参数：1 GiB 文件、64 MiB 块、不清页缓存。
 func DefaultDiskOptions() DiskOptions {
 	return DiskOptions{
 		SizeBytes:  1 << 30,
 		BlockBytes: 64 << 20,
-		DropCaches: true,
+		DropCaches: false,
 	}
 }
 
@@ -44,9 +49,19 @@ type DiskResult struct {
 	ReadSpeed    float64
 	CacheDropped bool
 	CacheNote    string
+	// UsedTemp 表示使用的是临时文件（测试结束后删除）。
+	UsedTemp bool
 }
 
+// ErrFileExists 表示目标测试文件已存在且未启用覆盖。
+var ErrFileExists = errors.New("测试文件已存在")
+
 // RunDisk 执行顺序写 + fsync + 顺序读测试。
+//
+// 数据安全约定：
+//   - 未指定 FilePath 时一律在临时目录创建新文件，测试完删除；
+//   - 指定 FilePath 时使用 O_EXCL 排他创建：文件已存在直接返回 ErrFileExists，
+//     绝不截断原文件。确需覆盖必须显式设置 Overwrite。
 func RunDisk(opts DiskOptions) (DiskResult, error) {
 	if opts.SizeBytes <= 0 {
 		opts.SizeBytes = DefaultDiskOptions().SizeBytes
@@ -56,31 +71,54 @@ func RunDisk(opts DiskOptions) (DiskResult, error) {
 	}
 
 	path := opts.FilePath
-	if path == "" {
+	usedTemp := path == ""
+	if usedTemp {
 		f, err := os.CreateTemp("", "toolbox-diskbench-*.tmp")
 		if err != nil {
 			return DiskResult{}, err
 		}
 		path = f.Name()
 		f.Close()
+		// 临时文件总是清理，KeepFile 对其无效。
 		opts.KeepFile = false
 	}
 
-	result := DiskResult{Path: path, SizeBytes: opts.SizeBytes}
-
-	if !opts.KeepFile {
-		defer os.Remove(path)
-	}
+	result := DiskResult{Path: path, SizeBytes: opts.SizeBytes, UsedTemp: usedTemp}
 
 	block := make([]byte, opts.BlockBytes)
 	if _, err := rand.Read(block); err != nil {
+		if usedTemp {
+			_ = os.Remove(path)
+		}
 		return result, fmt.Errorf("生成随机数据失败: %w", err)
 	}
 
 	// ---- 写入 ----
-	f, err := os.Create(path)
+	// 临时文件已由 CreateTemp 创建；用户指定路径时排他创建，避免截断已有数据。
+	var (
+		f   *os.File
+		err error
+	)
+	if usedTemp {
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	} else if opts.Overwrite {
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	} else {
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			return result, fmt.Errorf("%w: %s（如需覆盖请显式允许）", ErrFileExists, path)
+		}
+	}
 	if err != nil {
+		if usedTemp {
+			_ = os.Remove(path)
+		}
 		return result, fmt.Errorf("创建测试文件失败: %w", err)
+	}
+
+	// 文件已安全创建后再登记清理：临时文件/未要求保留的测试文件测完删除。
+	if !opts.KeepFile {
+		defer os.Remove(path)
 	}
 	writeStart := time.Now()
 	remaining := opts.SizeBytes
@@ -108,6 +146,8 @@ func RunDisk(opts DiskOptions) (DiskResult, error) {
 	// ---- 清缓存 ----
 	if opts.DropCaches {
 		result.CacheDropped, result.CacheNote = dropCaches()
+	} else {
+		result.CacheNote = "未清除页缓存（默认）：读取可能命中内存缓存，读速度偏乐观"
 	}
 
 	// ---- 读取 ----
@@ -188,6 +228,7 @@ func FormatDiskResult(r DiskResult) string {
 	b.WriteString("=== 磁盘 I/O 性能测试 ===\n")
 	b.WriteString(fmt.Sprintf("文件路径: %s\n", r.Path))
 	b.WriteString(fmt.Sprintf("测试大小: %s\n", FormatBytes(float64(r.SizeBytes))))
+	b.WriteString("测量方法: 顺序写 + fsync 落盘后计时；随后顺序读全文计时\n")
 	b.WriteString("---------------------------------\n")
 	b.WriteString("写入测试\n")
 	b.WriteString(fmt.Sprintf("  耗时: %.2f 秒\n", r.WriteTime.Seconds()))

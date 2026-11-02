@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -162,7 +163,8 @@ func runDiskBench(args []string) error {
 	sizeMB := fs.Int("size", 1024, "测试文件大小（MB）")
 	blockMB := fs.Int("block", 64, "读写块大小（MB）")
 	keep := fs.Bool("keep", false, "保留测试文件")
-	noDrop := fs.Bool("no-drop-caches", false, "不尝试清除系统页缓存")
+	overwrite := fs.Bool("overwrite", false, "允许覆盖已存在的测试文件（默认拒绝，防止丢数据）")
+	dropCaches := fs.Bool("drop-caches", false, "尝试清除系统页缓存（仅 Linux，需 root，会影响同机其他程序）")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -178,10 +180,14 @@ func runDiskBench(args []string) error {
 		opts.BlockBytes = int64(*blockMB) << 20
 	}
 	opts.KeepFile = *keep
-	opts.DropCaches = !*noDrop
+	opts.Overwrite = *overwrite
+	opts.DropCaches = *dropCaches
 
 	result, err := bench.RunDisk(opts)
 	if err != nil {
+		if errors.Is(err, bench.ErrFileExists) {
+			return fmt.Errorf("%w\n提示：换一个 -file 路径，或加 -overwrite 明确允许覆盖", err)
+		}
 		return err
 	}
 	fmt.Print(bench.FormatDiskResult(result))

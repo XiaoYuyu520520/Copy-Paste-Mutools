@@ -103,7 +103,15 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	m.win = win
 
 	// ---- 左侧竖向页面切换（替代历史栏） ----
-	m.rail = NewLeftRail([]string{"编辑器", "模拟键盘输入", "文件夹 Tree", "AI 设置"}, m.onRailPick)
+	// 非 Windows 平台没有真正的模拟键盘输入实现，直接不展示该入口。
+	railItems := []string{"编辑器", "模拟键盘输入", "文件夹 Tree", "AI 设置"}
+	if !simInputSupported {
+		railItems[featSim] = ""
+	}
+	m.rail = NewLeftRail(railItems, m.onRailPick)
+	if !simInputSupported {
+		m.rail.HideRow(featSim)
+	}
 
 	// ---- 多标签编辑器 ----
 	m.tabBar = NewCustomTabBar(m.onTabSelect)
@@ -213,6 +221,10 @@ func (m *MainApp) onRailPick(i int) {
 // selectFeature 切换左侧整页功能之一；离开模拟输入页时先停止可能正在进行的键入。
 func (m *MainApp) selectFeature(i int) {
 	if i < featEditor || i > featAISet {
+		return
+	}
+	if i == featSim && !simInputSupported {
+		m.setStatus("当前平台不支持模拟键盘输入（仅 Windows）")
 		return
 	}
 	if m.feature == featSim && i != featSim && m.simPanel != nil {

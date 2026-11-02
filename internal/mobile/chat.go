@@ -27,12 +27,16 @@ type chatPage struct {
 	sendBtn *widget.Button
 	status  *widget.Label
 
+	// mu 保护下方全部共享状态（历史、发送态、取消函数、代次）。
 	mu      sync.Mutex
 	history []chatMsg
 
-	// 当前流式回复的气泡
+	// streaming 为 true 表示有一个请求在途；
+	// cancel 是它的取消函数；gen 是会话代次，
+	// 每次发送/清空自增，旧请求完成后若代次不匹配则不再碰 UI 状态。
 	streaming bool
 	cancel    context.CancelFunc
+	gen       int
 }
 
 func newChatPage(s *store) *chatPage {
@@ -58,27 +62,35 @@ func newChatPage(s *store) *chatPage {
 }
 
 // toggleSend 在「发送」与「停止」之间切换。
+//
+// 发送状态在启动 goroutine 之前同步切换：连续快速点击只会启动一个请求，
+// 其余点击走「停止」分支取消当前请求。
 func (p *chatPage) toggleSend() {
+	text := strings.TrimSpace(p.input.Text)
+
+	p.mu.Lock()
 	if p.streaming {
-		if p.cancel != nil {
-			p.cancel()
+		cancel := p.cancel
+		p.mu.Unlock()
+		if cancel != nil {
+			cancel()
 		}
 		return
 	}
-	go p.send()
-}
-
-// send 发起一次对话请求。
-func (p *chatPage) send() {
-	text := strings.TrimSpace(p.input.Text)
 	if text == "" {
+		p.mu.Unlock()
 		return
 	}
 
-	p.mu.Lock()
+	// 在锁内完成：追加历史、占位发送态、生成代次与取消函数。
 	p.history = append(p.history, chatMsg{Role: "user", Content: text})
 	history := make([]chatMsg, len(p.history))
 	copy(history, p.history)
+	p.streaming = true
+	p.gen++
+	gen := p.gen
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
 	p.mu.Unlock()
 
 	fyne.Do(func() {
@@ -89,9 +101,12 @@ func (p *chatPage) send() {
 		p.sendBtn.SetIcon(theme.CancelIcon())
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	p.streaming = true
-	p.cancel = cancel
+	go p.send(ctx, cancel, history, gen)
+}
+
+// send 发起一次对话请求。只在 toggleSend 确认独占后由 goroutine 调用。
+func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history []chatMsg, gen int) {
+	defer cancel()
 
 	// 助手气泡先占位，流式分片直接往里追加。
 	//
@@ -102,7 +117,7 @@ func (p *chatPage) send() {
 	bubble := <-bubbleCh
 
 	var sb strings.Builder
-	cfg := *p.store.Config().AI
+	cfg := p.store.AIConfig()
 
 	err := streamChat(ctx, cfg, history,
 		func(delta string) {
@@ -111,6 +126,23 @@ func (p *chatPage) send() {
 		},
 		func(full string) {},
 	)
+
+	// 完成时校验代次：期间用户清空过会话/发起新请求，就不回写旧状态。
+	current := false
+	p.mu.Lock()
+	if p.gen == gen {
+		current = true
+		p.streaming = false
+		p.cancel = nil
+		if ctx.Err() == nil && sb.Len() > 0 {
+			p.history = append(p.history, chatMsg{Role: "assistant", Content: sb.String()})
+		}
+	}
+	p.mu.Unlock()
+
+	if !current {
+		return
+	}
 
 	fyne.Do(func() {
 		p.sendBtn.SetText("发送")
@@ -126,13 +158,6 @@ func (p *chatPage) send() {
 		}
 		p.status.SetText("")
 	})
-
-	if ctx.Err() == nil && sb.Len() > 0 {
-		p.mu.Lock()
-		p.history = append(p.history, chatMsg{Role: "assistant", Content: sb.String()})
-		p.mu.Unlock()
-	}
-	p.streaming = false
 }
 
 // addBubble 在消息列表末尾追加一个气泡，返回它的容器。
@@ -173,15 +198,23 @@ func bubbleContent(who, text string, user bool) fyne.CanvasObject {
 
 // clear 清空当前会话。
 func (p *chatPage) clear() {
+	p.mu.Lock()
 	if p.cancel != nil {
 		p.cancel()
 	}
-	p.mu.Lock()
+	p.cancel = nil
+	p.streaming = false
+	p.gen++ // 让在途请求完成时不再回写状态
 	p.history = nil
 	p.mu.Unlock()
-	p.msgBox.Objects = nil
-	p.msgBox.Refresh()
-	p.status.SetText("已清空会话")
+
+	fyne.Do(func() {
+		p.msgBox.Objects = nil
+		p.msgBox.Refresh()
+		p.sendBtn.SetText("发送")
+		p.sendBtn.SetIcon(theme.MailSendIcon())
+		p.status.SetText("已清空会话")
+	})
 }
 
 // 保持 sort 导入（后续会话排序会用到）。

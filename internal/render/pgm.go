@@ -120,6 +120,9 @@ func tokenize(data []byte, pos int) (tok string, next int, err error) {
 	return "", pos, fmt.Errorf("意外到达文件末尾")
 }
 
+// pgmMaxPixels 限制单张 PGM 的像素总数，避免畸形文件撑爆内存。
+const pgmMaxPixels = 64 * 1024 * 1024
+
 // DecodePGM 读取 P5/P2 PGM 为 8 位灰度图。
 func DecodePGM(data []byte) (*image.Gray, error) {
 	magic, pos, err := tokenize(data, 0)
@@ -153,17 +156,28 @@ func DecodePGM(data []byte) (*image.Gray, error) {
 	if w <= 0 || h <= 0 || maxv <= 0 {
 		return nil, fmt.Errorf("非法尺寸/最大灰度: %dx%d max=%d", w, h, maxv)
 	}
+	if maxv > 65535 {
+		return nil, fmt.Errorf("最大灰度 %d 超出规范上限 65535", maxv)
+	}
+	if int64(w)*int64(h) > pgmMaxPixels {
+		return nil, fmt.Errorf("图像过大: %dx%d 超过上限 %d 像素", w, h, pgmMaxPixels)
+	}
 	img := image.NewGray(image.Rect(0, 0, w, h))
+
+	// 统一按声明的 maxv 归一化到 0..255：
+	// 无论 P2/P5、无论 maxv 是否 255，都必须做范围转换，否则 maxv=15 的图
+	// 会把 15 当成 15（而非 255），整体偏暗。
 	scale := func(v int) uint8 {
+		if v <= 0 {
+			return 0
+		}
+		if v >= maxv {
+			return 255
+		}
 		if maxv == 255 {
 			return uint8(v)
 		}
-		// 按比例缩放（含 >255 的 16 位图）
-		p := v * 255 / maxv
-		if p > 255 {
-			p = 255
-		}
-		return uint8(p)
+		return uint8(int64(v) * 255 / int64(maxv))
 	}
 
 	// P5 的像素数据紧跟一个分隔空白字符（规范：恰好一个）之后开始
@@ -188,7 +202,10 @@ func DecodePGM(data []byte) (*image.Gray, error) {
 			if len(data)-pos < w*h {
 				return nil, fmt.Errorf("P5 数据不足: 期望 %d 字节，实得 %d", w*h, len(data)-pos)
 			}
-			copy(img.Pix, data[pos:pos+w*h])
+			for i := 0; i < w*h; i++ {
+				img.Pix[i] = scale(int(data[pos+i]))
+			}
+			pos += w * h
 		} else {
 			// 16 位大端
 			for i := 0; i < w*h; i++ {

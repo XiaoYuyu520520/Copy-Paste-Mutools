@@ -43,6 +43,57 @@ func TestDecodePGM_P2AndP5(t *testing.T) {
 	}
 }
 
+func TestDecodePGM_NormalizesLowMaxValue(t *testing.T) {
+	// maxv=15 时，像素 15 必须映射为 255，0 映射为 0，8 映射为 136。
+	var p5 strings.Builder
+	p5.WriteString("P5\n4 1\n15\n")
+	p5.Write([]byte{0, 15, 8, 5})
+	img, err := DecodePGM([]byte(p5.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []uint8{0, 255, 136, 85}
+	for i, w := range want {
+		if img.Pix[i] != w {
+			t.Errorf("P5 maxv=15 Pix[%d]=%d, want %d", i, img.Pix[i], w)
+		}
+	}
+
+	p2 := "P2\n4 1\n15\n0 15 8 5\n"
+	img2, err := DecodePGM([]byte(p2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, w := range want {
+		if img2.Pix[i] != w {
+			t.Errorf("P2 maxv=15 Pix[%d]=%d, want %d", i, img2.Pix[i], w)
+		}
+	}
+}
+
+func TestDecodePGM_ClampsAndHandles16Bit(t *testing.T) {
+	// 16 位大端，maxv=65535：0xFFFF -> 255, 0x8000 -> 127
+	buf := []byte("P5\n3 1\n65535\n")
+	buf = append(buf, 0x00, 0x00, 0xFF, 0xFF, 0x80, 0x00)
+	img, err := DecodePGM(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Pix[0] != 0 || img.Pix[1] != 255 || img.Pix[2] != 127 {
+		t.Errorf("16bit 归一化错误: %v", img.Pix)
+	}
+}
+
+func TestDecodePGM_RejectsOversizedImage(t *testing.T) {
+	// 声明一个超过像素上限的尺寸，应立即报错而不是分配内存。
+	if _, err := DecodePGM([]byte("P5\n100000 100000\n255\n")); err == nil {
+		t.Fatal("超大图像应被拒绝")
+	}
+	if _, err := DecodePGM([]byte("P5\n4 1\n99999\n")); err == nil {
+		t.Fatal("非法 maxv 应被拒绝")
+	}
+}
+
 func TestParseYAML(t *testing.T) {
 	y := `
 # 元数据

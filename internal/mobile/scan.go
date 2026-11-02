@@ -19,6 +19,15 @@ import (
 // 列表刻意选短：每多一个端口就多一轮并发拨号，扫 /24 时差别很明显。
 var mobileProbePorts = []int{80, 443, 22, 445, 3389, 8080, 8000, 8888, 5000, 9090}
 
+// scanState 是扫描页的状态机，避免 cancel 在 goroutine 间裸读写。
+type scanState uint8
+
+const (
+	scanIdle     scanState = iota // 空闲，可开始
+	scanRunning                   // 扫描进行中
+	scanStopping                  // 用户点了停止，等待扫描 goroutine 收尾
+)
+
 // scanPage 是局域网扫描页。
 type scanPage struct {
 	root fyne.CanvasObject
@@ -28,9 +37,9 @@ type scanPage struct {
 	status    *widget.Label
 	list      *widget.List
 
-	mu    sync.Mutex
-	hosts []*netscan.Host
-
+	mu     sync.Mutex
+	hosts  []*netscan.Host
+	state  scanState
 	cancel context.CancelFunc
 }
 
@@ -51,11 +60,12 @@ func newScanPage() *scanPage {
 		func() fyne.CanvasObject { return widget.NewLabel("template") },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			p.mu.Lock()
-			defer p.mu.Unlock()
 			if i < 0 || i >= len(p.hosts) {
+				p.mu.Unlock()
 				return
 			}
 			h := p.hosts[i]
+			p.mu.Unlock()
 			label := o.(*widget.Label)
 			label.SetText(fmt.Sprintf("%s  %s  %s", h.IP, orDash(h.Hostname), openPortsText(h.OpenPorts)))
 		},
@@ -87,27 +97,44 @@ func (p *scanPage) guessCIDR() {
 
 // toggle 开始或停止扫描。
 func (p *scanPage) toggle() {
-	if p.cancel != nil {
-		p.cancel()
+	cidr := p.cidrEntry.Text
+
+	p.mu.Lock()
+	switch p.state {
+	case scanRunning:
+		// 只允许取消一次；后续点击在收尾前忽略。
+		p.state = scanStopping
+		cancel := p.cancel
+		p.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return
+	case scanStopping:
+		p.mu.Unlock()
 		return
 	}
-	cidr := p.cidrEntry.Text
+
 	if cidr == "" {
+		p.mu.Unlock()
 		p.status.SetText("请先填写网段，例如 192.168.1.0/24")
 		return
 	}
-	go p.scan(cidr)
+
+	// 在启动 goroutine 前同步切换状态，防止连点启动多个扫描。
+	ctx, cancel := context.WithCancel(context.Background())
+	p.state = scanRunning
+	p.cancel = cancel
+	p.hosts = nil
+	p.mu.Unlock()
+
+	go p.scan(ctx, cancel, cidr)
 }
 
 // scan 执行一次扫描。
-func (p *scanPage) scan(cidr string) {
-	ctx, cancel := context.WithCancel(context.Background())
-	p.cancel = cancel
-	defer func() { p.cancel = nil }()
+func (p *scanPage) scan(ctx context.Context, cancel context.CancelFunc, cidr string) {
+	defer cancel()
 
-	p.mu.Lock()
-	p.hosts = nil
-	p.mu.Unlock()
 	fyne.Do(func() {
 		p.startBtn.SetText("停止")
 		p.startBtn.SetIcon(theme.CancelIcon())
@@ -144,11 +171,17 @@ func (p *scanPage) scan(cidr string) {
 		})
 	})
 
+	cancelled := ctx.Err() != nil
+	p.mu.Lock()
+	p.cancel = nil
+	p.state = scanIdle
+	p.mu.Unlock()
+
 	fyne.Do(func() {
 		p.startBtn.SetText("开始扫描")
 		p.startBtn.SetIcon(theme.SearchIcon())
 		switch {
-		case err != nil && ctx.Err() != nil:
+		case err != nil && cancelled:
 			p.status.SetText(fmt.Sprintf("已停止，发现 %d 台", p.count()))
 		case err != nil:
 			p.status.SetText("扫描失败：" + err.Error())
