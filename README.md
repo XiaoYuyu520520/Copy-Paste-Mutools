@@ -14,11 +14,28 @@
 
 ---
 
+## 🌐 在线工具（GitHub Pages · 免安装）
+
+与桌面 / 命令行工具同属一个项目的网页版，打开即用，**全部在浏览器本地处理，不上传数据**：
+
+| 工具 | 说明 |
+| --- | --- |
+| **[Base64 编解码](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/base64.html)** | UTF-8 / URL-safe / 文件转 Base64，本地处理 |
+| **[二维码生成器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/qrcode.html)** | 文本 / 网址即时生成，可下载 PNG、SVG |
+| **[浏览器编解码检测](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/codec.html)** | 检测 H.264 / HEVC / AV1 / VP9 / AAC / Opus 等支持情况 |
+| **[Markdown 实时预览](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html)** | GitHub 风格渲染、代码高亮、亮暗主题、左右对照 |
+| **[2D 激光地图查看器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)** | 打开 `.pgm + .yaml`：比例尺 / 测距 / 橡皮 / 导出 |
+
+> 📘 文档站首页：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/>
+
+---
+
 ## 📖 文档导航
 
 | 想看什么 | 入口 |
 | --- | --- |
 | 📘 **完整文档站** | **[docs/index.md](docs/index.md)** · [在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/) |
+| 🧪 **在线工具（网页版）** | [Base64](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/base64.html) / [二维码](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/qrcode.html) / [编解码检测](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/codec.html) / [Markdown](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html) / [激光地图](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html) |
 | 🚀 **快速上手（5 分钟）** | [docs/快速上手.md](docs/快速上手.md) |
 | 🧰 **工具箱命令手册** | [docs/工具箱.md](docs/工具箱.md) |
 | 🖥️ **桌面应用说明** | [docs/桌面应用.md](docs/桌面应用.md) |
@@ -44,8 +61,8 @@
 - **实时合并**：勾选与文本即时联动，底部只读框实时预览结果（200 ms 去抖）
 - **模拟键盘输入**：把合并结果逐字「真实键入」到目标程序，绕过粘贴检测
 - **文件夹树**：按 `tree` 风格输出目录结构，可屏蔽构建/依赖目录
-- **Markdown 渲染**：本地起服务 + 系统浏览器打开，GitHub 风格实时预览、代码高亮
-- **2D 激光地图**：打开 `.pgm + .yaml` 即进入地图查看器（比例尺 / 测量 / 橡皮）
+- **Markdown 渲染**：本地起服务 + 系统浏览器打开，GitHub 风格实时预览、代码高亮（[在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html)）
+- **2D 激光地图**：打开 `.pgm + .yaml` 即进入地图查看器（比例尺 / 测量 / 橡皮）（[在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)）
 - **局域网扫描**：自动枚举网卡与子网，ICMP + TCP 回退，表格实时刷新、导出 CSV
 - **AI 聊天**：OpenAI 兼容 `/chat/completions` 流式对话，可接 OpenAI / DeepSeek / Qwen / Ollama
 - **亮/暗主题**：一键切换并记忆
