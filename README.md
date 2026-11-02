@@ -24,7 +24,7 @@
 | **[二维码生成器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/qrcode.html)** | 文本 / 网址即时生成，可下载 PNG、SVG |
 | **[浏览器编解码检测](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/codec.html)** | H.264 / HEVC / AV1 / VP9 / AAC / Opus，含 WebRTC 实时通信与硬件编码检测 |
 | **[Markdown 实时预览](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html)** | GitHub 风格渲染、代码高亮、亮暗主题、左右对照 |
-| **[2D 激光地图查看器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)** | 打开 `.pgm + .yaml`：比例尺 / 测距 / 橡皮 / 导出 |
+| **[2D 激光地图查看器](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)** | 打开 `.pgm + .yaml`：比例尺 / 测距 / 橡皮 / 导出；仅 YAML 时作为编辑器 |
 
 > 📘 文档站首页：<https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/>
 

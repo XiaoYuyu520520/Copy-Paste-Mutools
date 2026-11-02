@@ -41,6 +41,27 @@
     border:1px solid #30363d;border-radius:8px;padding:7px 14px;font-size:13px;
     box-shadow:0 6px 20px rgba(1,4,9,.6);max-width:70vw}
   #toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* ---------- 仅 YAML 时的编辑器 ---------- */
+  #yamlPane{display:none;height:calc(100% - 47px);background:#010409;padding:14px 16px}
+  #yamlPane.on{display:flex;flex-direction:column;gap:10px}
+  #yamlPane .head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  #yamlPane .head .t{font-weight:600}
+  #yamlPane .head .sp{flex:1}
+  #yamlPane .head button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
+    padding:4px 12px;cursor:pointer;font-size:13px}
+  #yamlPane .head button:hover{background:#30363d}
+  #yamlPane .head button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
+  #yamlEditor{flex:1 1 auto;min-height:120px;resize:none;width:100%;background:#0d1117;color:#e6edf3;
+    border:1px solid #30363d;border-radius:8px;padding:12px 14px;
+    font:13px/1.7 ui-monospace,"Cascadia Mono",Consolas,monospace;outline:none}
+  #yamlEditor:focus{border-color:#1f6feb}
+  #yamlPane .foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#8b949e}
+  #yamlPane .err{color:#ff7b72}
+  #yamlPane .ok{color:#3fb950}
+  #yamlPane .warn{color:#d29922}
+  #yamlHint{font-size:12px;color:#8b949e;line-height:1.8}
+  #yamlHint b{color:#e6edf3}
 </style>
 </head>
 <body>
@@ -48,11 +69,12 @@
   <span class="title">2D 激光 SLAM 地图</span>
   <span class="muted" id="meta">未加载地图</span>
   <span class="sp"></span>
-  <button id="openBtn" title="选择 .pgm（可同时选择 .yaml）">打开地图…</button>
+  <button id="openBtn" title="选择 .pgm / .yaml（可一起选择）">打开地图…</button>
   <button id="measureBtn" title="点击两次测量两点直线距离" disabled>测量尺子</button>
   <button id="eraseBtn" title="把地图上的障碍物像素擦成空白" disabled>障碍物擦除</button>
   <label>橡皮</label><input id="brush" type="range" min="1" max="40" value="8">
   <button id="saveBtn" disabled>保存下载 .pgm + .yaml</button>
+  <button id="yamlBtn" style="display:none" title="编辑当前地图的 YAML 元数据">编辑 YAML</button>
   <a class="link" href="markdown.html">Markdown →</a>
   <a class="link" href="../index.html">← 工具首页</a>
   <input id="file" type="file" multiple hidden accept=".pgm,.yaml,.yml">
@@ -62,7 +84,8 @@
     <div class="big">打开 .pgm + .yaml 地图</div>
     <div class="sub">
       把 <code>.pgm</code> 与同名 <code>.yaml</code> 一起拖进页面，或点击下方按钮选择。<br>
-      有 <code>.yaml</code> 时启用比例尺与真实距离测量；全部在本地浏览器处理。
+      有 <code>.yaml</code> 时启用比例尺与真实距离测量；<b>只拖入 .yaml 会打开 YAML 编辑器</b>，
+      只拖入 <code>.pgm</code> 也能预览 / 擦除 / 下载，距离按像素显示。
     </div>
     <button id="openBtn2">选择文件…</button>
   </div>
@@ -71,21 +94,44 @@
     <canvas id="ov"></canvas>
   </div>
 </div>
-<div id="drop"><div class="hint">松手即打开地图</div></div>
+
+<div id="yamlPane">
+  <div class="head">
+    <span class="t">YAML 编辑器</span>
+    <span class="muted" id="yamlName">map.yaml</span>
+    <span class="sp"></span>
+    <button id="yamlCheck">校验</button>
+    <button id="yamlCopy">复制</button>
+    <button id="yamlDownload">下载 .yaml</button>
+    <button id="yamlApply" class="primary" style="display:none">应用到当前地图</button>
+    <button id="yamlClose">关闭</button>
+  </div>
+  <textarea id="yamlEditor" spellcheck="false" placeholder="image: map.pgm&#10;resolution: 0.05&#10;origin: [0.0, 0.0, 0.0]&#10;negate: 0&#10;occupied_thresh: 0.65&#10;free_thresh: 0.196"></textarea>
+  <div id="yamlResult" class="foot"></div>
+  <div id="yamlHint">
+    <b>常用字段</b>：<code>image</code> 对应的 .pgm 文件名 · <code>resolution</code> 米/像素 ·
+    <code>origin: [x, y, yaw]</code> 地图左下角位姿 · <code>negate</code> 0/1 ·
+    <code>occupied_thresh</code> / <code>free_thresh</code> 0~1。<br>
+    校验只解析 map_server 常用字段；下载会保留你编辑后的完整文本。
+  </div>
+</div>
+
+<div id="drop"><div class="hint">松手即打开地图 / YAML 编辑器</div></div>
 <div id="toast"></div>
 
 <script>
 (function(){
   function $(id){ return document.getElementById(id); }
   var state = {
-    width: 0, height: 0, baseName: 'map', info: null,
-    img: null, scale: 1, cssW: 0, cssH: 0,
+    width: 0, height: 0, baseName: 'map', info: null, yamlName: '',
+    img: null, scale: 1, cssW: 0, cssH: 0, pgmOnly: false,
     tool: 'none', seg: [], curSeg: null, dirty: false, loading: false
   };
   var meta = $('meta'), wrap = $('mapwrap'), emptyState = $('emptyState');
   var mapCv = $('map'), ovCv = $('ov');
   var mctx = mapCv.getContext('2d'), octx = ovCv.getContext('2d');
   var btnM = $('measureBtn'), btnE = $('eraseBtn'), btnSave = $('saveBtn');
+  var btnYaml = $('yamlBtn'), yamlEditor = $('yamlEditor');
   var brush = $('brush'), fileInput = $('file');
   var tip = document.createElement('span');
   tip.id = 'tip';
@@ -261,6 +307,10 @@
       if (metric()){
         var dist = Math.hypot((s[2] - s[0]) * state.info.resolution, (s[3] - s[1]) * state.info.resolution);
         octx.fillText(dist.toFixed(2) + ' m', (a[0] + b[0]) / 2 + 8, (a[1] + b[1]) / 2 - 8);
+      } else {
+        // 无 .yaml 时退化：用像素距离，避免测量功能完全不可用
+        var pd = Math.hypot(s[2] - s[0], s[3] - s[1]);
+        octx.fillText(pd.toFixed(0) + ' px', (a[0] + b[0]) / 2 + 8, (a[1] + b[1]) / 2 - 8);
       }
     });
   }
@@ -343,7 +393,13 @@
       if (/\.pgm$/i.test(f.name)) { if (!pgmFile) pgmFile = f; }
       else if (/\.(yaml|yml)$/i.test(f.name)) { if (!yamlFile) yamlFile = f; }
     });
-    if (!pgmFile) { toast('请同时选择 .pgm 文件（可搭配同名 .yaml）'); return; }
+
+    // 只有 YAML：进入 YAML 编辑器模式
+    if (!pgmFile && yamlFile) { await openYamlEditor(yamlFile); return; }
+    if (!pgmFile) {
+      toast('不支持的文件类型：' + (list[0] ? list[0].name : '未知') + '（支持 .pgm / .yaml）');
+      return;
+    }
 
     state.loading = true;
     meta.textContent = '正在解析 ' + pgmFile.name + ' …';
@@ -352,45 +408,176 @@
       var gray = decodePGM(pgmBuf);
       var srcCanvas = grayToCanvas(gray);
 
-      var info = null;
-      if (yamlFile) info = parseYAML(await readFile(yamlFile, true));
+      var info = null, yamlName = '';
+      if (yamlFile) {
+        info = parseYAML(await readFile(yamlFile, true));
+        yamlName = yamlFile.name;
+      } else if (!state.img && state.info && state.info.raw) {
+        // 先单独打开过 YAML 编辑器，再拖入 .pgm：复用已载入的 YAML
+        info = state.info;
+        yamlName = state.yamlName;
+      }
 
       state.width = gray.width;
       state.height = gray.height;
       state.info = info;
+      state.yamlName = yamlName;
       state.baseName = info && info.image
         ? info.image.replace(/\.[^.]+$/, '')
         : pgmFile.name.replace(/\.[^.]+$/, '');
       state.img = srcCanvas;
+      state.pgmOnly = !yamlFile;
       state.seg = []; state.curSeg = null; state.dirty = false;
 
+      hideYamlPane();
       emptyState.style.display = 'none';
       wrap.style.display = 'block';
       [btnM, btnE, btnSave].forEach(function(b){ b.disabled = false; });
+      btnYaml.style.display = '';
 
       var resTxt = metric()
         ? (info.resolution + ' m/px · ' + (state.width * info.resolution).toFixed(1) + ' x ' +
            (state.height * info.resolution).toFixed(1) + ' m')
-        : '无 .yaml，仅预览 / 擦除 / 下载';
+        : '无 .yaml，仅预览 / 擦除 / 下载（距离按像素）';
       meta.textContent = state.baseName + ' · ' + state.width + 'x' + state.height + ' px · ' + resTxt;
 
       fit(true);
       if (!metric()){
-        btnM.disabled = true;
-        btnM.title = '缺少 .yaml（resolution），无法换算真实尺寸';
+        btnM.disabled = false;
+        btnM.title = '缺少 .yaml（resolution），测量结果按像素显示';
+        btnM.textContent = '像素测量';
       } else {
         btnM.disabled = false;
         btnM.title = '点击两次测量两点直线距离';
+        btnM.textContent = '测量尺子';
       }
       if (!tip.parentNode) $('stage').appendChild(tip);
       setTool('none');
-      toast('已打开 ' + pgmFile.name + (yamlFile ? ' + ' + yamlFile.name : ''));
+      toast('已打开 ' + pgmFile.name + (yamlFile ? ' + ' + yamlFile.name : '（无 .yaml，距离按像素）'));
     } catch (err) {
       meta.textContent = '未加载地图';
       toast('打开失败：' + err.message);
     } finally {
       state.loading = false;
     }
+  }
+
+  // ---------- YAML 编辑器（仅有 .yaml 或点「编辑 YAML」时） ----------
+  function showYamlPane(){
+    $('yamlPane').classList.add('on');
+    $('yamlApply').style.display = state.img ? '' : 'none';
+    if (state.img){ wrap.style.display = 'none'; }
+    else { emptyState.style.display = 'none'; }
+  }
+
+  function hideYamlPane(){
+    $('yamlPane').classList.remove('on');
+  }
+
+  async function openYamlEditor(file){
+    try {
+      var text = await readFile(file, true);
+      var name = file.name || 'map.yaml';
+      state.yamlName = name;
+      if (!state.img){
+        state.info = parseYAML(text);
+        state.baseName = (state.info.image ? state.info.image.replace(/\.[^.]+$/, '') : 'map');
+      }
+      $('yamlName').textContent = name;
+      $('yamlEditor').value = text;
+      showYamlPane();
+      setYamlResult('已载入 ' + name + '（尚未应用到地图）', 'ok');
+      toast('已打开 YAML 编辑器：' + name);
+    } catch (err) {
+      toast('读取 YAML 失败：' + err.message);
+    }
+  }
+
+  function openCurrentYaml(){
+    if (!state.info || !state.info.raw){
+      $('yamlName').textContent = state.yamlName || (state.baseName + '.yaml');
+      $('yamlEditor').value = defaultYaml(state.baseName);
+      showYamlPane();
+      setYamlResult('当前地图没有 .yaml，已生成模板，编辑后点「应用到当前地图」', 'warn');
+      return;
+    }
+    $('yamlName').textContent = state.yamlName || (state.baseName + '.yaml');
+    $('yamlEditor').value = state.info.raw;
+    showYamlPane();
+    setYamlResult('已载入当前地图的 YAML，编辑后点「应用到当前地图」', 'ok');
+  }
+
+  function defaultYaml(base){
+    return 'image: ' + base + '.pgm\n' +
+      'resolution: 0.05\n' +
+      'origin: [0.0, 0.0, 0.0]\n' +
+      'negate: 0\n' +
+      'occupied_thresh: 0.65\n' +
+      'free_thresh: 0.196\n';
+  }
+
+  function setYamlResult(msg, kind){
+    var el = $('yamlResult');
+    el.textContent = msg || '';
+    el.className = 'foot' + (kind ? ' ' + kind : '');
+  }
+
+  function validateYaml(){
+    var text = $('yamlEditor').value;
+    var info = parseYAML(text);
+    var msgs = [];
+    if (!info.resolution || info.resolution <= 0) msgs.push('缺少或非法的 resolution（应 > 0）');
+    if (!info.image) msgs.push('缺少 image 字段');
+    if (info.negate !== 0 && info.negate !== 1) msgs.push('negate 通常为 0 或 1');
+    if (!(info.occupied_thresh > 0 && info.occupied_thresh <= 1)) msgs.push('occupied_thresh 应在 (0, 1]');
+    if (!(info.free_thresh >= 0 && info.free_thresh < info.occupied_thresh)) msgs.push('free_thresh 应小于 occupied_thresh');
+    var lines = text.split('\n').length;
+    if (msgs.length){
+      setYamlResult('校验发现 ' + msgs.length + ' 个问题：' + msgs.join('；'), 'err');
+      return false;
+    }
+    setYamlResult('校验通过 · ' + lines + ' 行 · resolution=' + info.resolution +
+      ' · origin=[' + info.origin.join(', ') + '] · negate=' + info.negate +
+      ' · occ=' + info.occupied_thresh + ' / free=' + info.free_thresh, 'ok');
+    return true;
+  }
+
+  function applyYaml(){
+    var text = $('yamlEditor').value;
+    if (!text.trim()) { setYamlResult('内容为空，无法应用', 'err'); return; }
+    state.info = parseYAML(text);
+    if (state.info.image) state.baseName = state.info.image.replace(/\.[^.]+$/, '');
+    if (state.img){
+      hideYamlPane();
+      wrap.style.display = 'block';
+      var resTxt = metric()
+        ? (state.info.resolution + ' m/px · ' + (state.width * state.info.resolution).toFixed(1) + ' x ' +
+           (state.height * state.info.resolution).toFixed(1) + ' m')
+        : 'resolution 缺失，距离按像素显示';
+      meta.textContent = state.baseName + ' · ' + state.width + 'x' + state.height + ' px · ' + resTxt;
+      btnM.textContent = metric() ? '测量尺子' : '像素测量';
+      state.seg = []; state.curSeg = null;
+      drawOverlay();
+      toast('YAML 已应用到当前地图');
+    } else {
+      validateYaml();
+      toast('YAML 已载入（尚未绑定 .pgm）');
+    }
+  }
+
+  function downloadYaml(){
+    var text = $('yamlEditor').value;
+    if (!text.trim()) { setYamlResult('内容为空，无法下载', 'err'); return; }
+    var name = (state.yamlName || (state.baseName + '.yaml'));
+    if (!/\.ya?ml$/i.test(name)) name = state.baseName + '.yaml';
+    trigger(name, new Blob([text], { type: 'text/yaml' }));
+    setYamlResult('已下载 ' + name, 'ok');
+  }
+
+  function closeYamlEditor(){
+    hideYamlPane();
+    if (state.img){ wrap.style.display = 'block'; }
+    else if (!state.pgmOnly){ emptyState.style.display = 'flex'; }
   }
 
   // ---------- 保存 ----------
@@ -413,7 +600,9 @@
     for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = px[i * 4];
     trigger(fname, new Blob([bytes], { type: 'image/x-portable-anymap' }));
     if (state.info && state.info.raw){
-      var yaml = state.info.raw.replace(/^([ \t]*image[ \t]*:).*$/m, '$1 ' + fname);
+      var yaml = /^[ \t]*image[ \t]*:/m.test(state.info.raw)
+        ? state.info.raw.replace(/^([ \t]*image[ \t]*:).*$/m, '$1 ' + fname)
+        : 'image: ' + fname + '\n' + state.info.raw;
       trigger(base + '.yaml', new Blob([yaml], { type: 'text/yaml' }));
     }
     toast('已下载 ' + fname + (state.info && state.info.raw ? ' 与 ' + base + '.yaml' : ''));
@@ -425,6 +614,17 @@
   btnSave.onclick = saveMap;
   $('openBtn').onclick = function(){ fileInput.click(); };
   $('openBtn2').onclick = function(){ fileInput.click(); };
+  btnYaml.onclick = openCurrentYaml;
+  $('yamlCheck').onclick = validateYaml;
+  $('yamlCopy').onclick = function(){ copyText(yamlEditor.value, 'YAML 已复制'); };
+  $('yamlDownload').onclick = downloadYaml;
+  $('yamlApply').onclick = applyYaml;
+  $('yamlClose').onclick = closeYamlEditor;
+  yamlEditor.addEventListener('keydown', function(e){
+    var k = (e.key || '').toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); downloadYaml(); }
+    else if ((e.ctrlKey || e.metaKey) && k === 'enter') { e.preventDefault(); applyYaml(); }
+  });
   fileInput.addEventListener('change', function(){
     var files = fileInput.files;
     fileInput.value = '';
