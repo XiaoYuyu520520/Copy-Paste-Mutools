@@ -43,6 +43,7 @@
       <div class="stat"><div class="n" id="cntAudio">–</div><div class="l">音频编码可用（canPlayType）</div></div>
       <div class="stat"><div class="n" id="cntWC">–</div><div class="l">WebCodecs 可解码项</div></div>
       <div class="stat"><div class="n" id="cntMSE">–</div><div class="l">MSE 可播放项</div></div>
+      <div class="stat"><div class="n" id="cntRTC">–</div><div class="l">WebRTC 可发送视频编码</div></div>
     </div>
     <div class="env" id="env"></div>
     <div class="toolbar" style="margin-top:12px">
@@ -77,6 +78,27 @@
   </div>
 
   <div class="card">
+    <h2 style="margin-top:0">WebRTC 实时通信</h2>
+    <p class="hint" style="margin:0 0 10px">
+      发送 / 接收能力来自 <code>RTCRtpSender/Receiver.getCapabilities("video")</code>；
+      编码能力用 <code>MediaCapabilities.encodingInfo({ type: "webrtc" })</code> 检测。
+      <b>powerEfficient = true</b> 通常表示走了硬件 / 低功耗编码路径。
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>编码</th><th>RTC 发送</th><th>RTC 接收</th><th>MediaCapabilities 编码</th><th>硬件加速迹象</th></tr>
+        </thead>
+        <tbody id="rtcBody"><tr><td colspan="5" class="hint">检测中…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin:12px 0 0">
+      浏览器不会暴露具体硬件编码器名称，<code>powerEfficient</code> / <code>smooth</code>
+      只是能力提示；实际是否走硬编还取决于系统、驱动、分辨率与通话参数。
+    </p>
+  </div>
+
+  <div class="card">
     <h2 style="margin-top:0">结果怎么看</h2>
     <ul class="hint" style="margin:0;padding-left:20px">
       <li><b>canPlayType</b>：媒体元素能否播放。<code>probably</code> 基本可用，<code>maybe</code> 需实际加载验证，空表示不支持。</li>
@@ -85,6 +107,10 @@
       <li>HEVC（H.265）受专利与系统解码器影响，Chrome/Edge 在部分平台需要硬件支持。</li>
       <li>AV1 软解较普遍，AV1 硬件编码仅较新设备支持。</li>
       <li>WebCodecs 需要安全上下文（HTTPS 或 localhost）。</li>
+      <li><b>WebRTC</b>：<code>getCapabilities</code> 表示该编码是否在收发能力列表中；
+        <code>MediaCapabilities</code> 的 <code>powerEfficient=true</code> 通常意味着硬件 / 低功耗编码，
+        但它只是提示，不等于绝对保证。</li>
+      <li>实时通话中常见编码：VP8（兼容性最好）、VP9（压缩率更高）、H.264（与移动端/硬件生态兼容）。</li>
     </ul>
   </div>
 
@@ -111,6 +137,14 @@ const AUDIO = [
   { name: "Vorbis", mime: 'audio/webm; codecs="vorbis"', cfg: { codec: "vorbis", sampleRate: 48000, numberOfChannels: 2 } },
   { name: "FLAC", mime: 'audio/flac', cfg: { codec: "flac", sampleRate: 48000, numberOfChannels: 2 } },
   { name: "AC-3", mime: 'audio/mp4; codecs="ac-3"', cfg: { codec: "ac-3", sampleRate: 48000, numberOfChannels: 2 } }
+];
+
+// WebRTC 实时通信常用视频编码（VP8 / VP9 / H.264 为主，AV1 作为补充）
+const RTC_CODECS = [
+  { name: "VP8", match: ["VP8"], contentType: "video/VP8", width: 1280, height: 720, bitrate: 2000000, framerate: 30 },
+  { name: "VP9", match: ["VP9"], contentType: "video/VP9", width: 1280, height: 720, bitrate: 2000000, framerate: 30 },
+  { name: "H.264", match: ["H264", "H.264"], contentType: "video/H264", width: 1280, height: 720, bitrate: 2000000, framerate: 30 },
+  { name: "AV1", match: ["AV1"], contentType: "video/AV1", width: 1280, height: 720, bitrate: 2000000, framerate: 30 }
 ];
 
 const videoEl = document.createElement("video");
@@ -163,6 +197,99 @@ function triBadge(v) {
   return badge("na", "无 API");
 }
 
+// ---------- WebRTC 能力 ----------
+function rtcCodecSet(ctor) {
+  try {
+    if (!ctor || typeof ctor.getCapabilities !== "function") return null;
+    const caps = ctor.getCapabilities("video");
+    if (!caps || !Array.isArray(caps.codecs)) return null;
+    return new Set(caps.codecs.map((c) => String(c.mimeType || "").toUpperCase()));
+  } catch {
+    return null;
+  }
+}
+
+function rtcMatch(set, names) {
+  if (!set) return null;
+  for (const name of names) {
+    for (const mime of set) {
+      if (mime.indexOf(name.toUpperCase()) >= 0) return true;
+    }
+  }
+  return false;
+}
+
+function rtcSupportBadge(v) {
+  if (v === null || v === undefined) return badge("na", "无 API");
+  return v ? badge("ok", "支持") : badge("no", "不支持");
+}
+
+async function mediaEncodeInfo(codec) {
+  const mc = navigator.mediaCapabilities;
+  if (!mc || typeof mc.encodingInfo !== "function") return { api: false };
+  const base = {
+    type: "webrtc",
+    video: {
+      contentType: codec.contentType,
+      width: codec.width,
+      height: codec.height,
+      bitrate: codec.bitrate,
+      framerate: codec.framerate
+    }
+  };
+  try {
+    const info = await mc.encodingInfo(Object.assign({ hardwareAcceleration: "prefer-hardware" }, base));
+    return { api: true, supported: !!info.supported, smooth: !!info.smooth, powerEfficient: !!info.powerEfficient };
+  } catch {
+    try {
+      const info = await mc.encodingInfo(base);
+      return { api: true, supported: !!info.supported, smooth: !!info.smooth, powerEfficient: !!info.powerEfficient };
+    } catch (err) {
+      return { api: true, supported: null, error: err && err.message ? err.message : String(err) };
+    }
+  }
+}
+
+function mediaEncodeBadge(e) {
+  if (!e.api) return badge("na", "无 API");
+  if (e.supported === null) return badge("na", "未知");
+  return e.supported ? badge("ok", "支持") : badge("no", "不支持");
+}
+
+function hardwareBadge(e) {
+  if (!e.api) return badge("na", "无 API");
+  if (e.supported === null) return badge("na", "未知");
+  if (!e.supported) return badge("na", "—");
+  return e.powerEfficient ? badge("ok", "是（低功耗）") : badge("maybe", "否（可能软编）");
+}
+
+async function testRTC() {
+  const sendSet = rtcCodecSet(window.RTCRtpSender);
+  const recvSet = rtcCodecSet(window.RTCRtpReceiver);
+  const out = [];
+  for (const codec of RTC_CODECS) {
+    out.push({
+      name: codec.name,
+      send: rtcMatch(sendSet, codec.match),
+      recv: rtcMatch(recvSet, codec.match),
+      enc: await mediaEncodeInfo(codec)
+    });
+  }
+  return out;
+}
+
+function renderRTC(results) {
+  $("rtcBody").innerHTML = results.map((r) => {
+    return "<tr>" +
+      "<td><b>" + r.name + "</b></td>" +
+      "<td>" + rtcSupportBadge(r.send) + "</td>" +
+      "<td>" + rtcSupportBadge(r.recv) + "</td>" +
+      "<td>" + mediaEncodeBadge(r.enc) + "</td>" +
+      "<td>" + hardwareBadge(r.enc) + "</td>" +
+      "</tr>";
+  }).join("");
+}
+
 async function testList(list, kind) {
   const out = [];
   for (const item of list) {
@@ -198,6 +325,7 @@ function escapeHTML(s) {
 
 let lastVideo = [];
 let lastAudio = [];
+let lastRTC = [];
 
 async function run() {
   setStatus("检测中…");
@@ -217,6 +345,9 @@ async function run() {
   renderRows($("videoBody"), lastVideo);
   renderRows($("audioBody"), lastAudio);
 
+  lastRTC = await testRTC();
+  renderRTC(lastRTC);
+
   const playableVideo = lastVideo.filter((r) => r.canPlay).length;
   const playableAudio = lastAudio.filter((r) => r.canPlay).length;
   const wcDecode = lastVideo.concat(lastAudio).filter((r) => r.decode === "ok").length;
@@ -225,6 +356,8 @@ async function run() {
   $("cntAudio").textContent = playableAudio + "/" + lastAudio.length;
   $("cntWC").textContent = wcDecode + "/" + (lastVideo.length + lastAudio.length);
   $("cntMSE").textContent = mseOk + "/" + (lastVideo.length + lastAudio.length);
+  const rtcSend = lastRTC.filter((r) => r.send === true).length;
+  $("cntRTC").textContent = rtcSend + "/" + lastRTC.length;
 
   $("btnRun").disabled = false;
   setStatus("检测完成", "ok");
@@ -251,12 +384,24 @@ function buildReport() {
   };
   dump("视频", lastVideo);
   dump("音频", lastAudio);
+
+  const tri = (v) => (v === null || v === undefined ? "n/a" : v ? "yes" : "no");
+  lines.push("[WebRTC 视频]");
+  lastRTC.forEach((r) => {
+    lines.push("- " + r.name +
+      " | send=" + tri(r.send) +
+      " | recv=" + tri(r.recv) +
+      " | mcEncode=" + (r.enc.api ? (r.enc.supported === null ? "unknown" : tri(r.enc.supported)) : "no-api") +
+      " | powerEfficient=" + (r.enc.api && r.enc.supported ? tri(r.enc.powerEfficient) : "n/a") +
+      " | smooth=" + (r.enc.api && r.enc.supported ? tri(r.enc.smooth) : "n/a"));
+  });
+  lines.push("");
   return lines.join("\n");
 }
 
 $("btnRun").addEventListener("click", run);
 $("btnReport").addEventListener("click", () => {
-  if (!lastVideo.length && !lastAudio.length) return setStatus("请先等待检测完成", "err");
+  if (!lastVideo.length && !lastAudio.length && !lastRTC.length) return setStatus("请先等待检测完成", "err");
   copyText(buildReport(), "报告已复制到剪贴板");
 });
 
