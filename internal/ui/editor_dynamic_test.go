@@ -21,8 +21,21 @@ func newTestEditor(t *testing.T, rows int) *TabEditor {
 	return NewTabEditor("测试", cfg, nil)
 }
 
+func stopEditorTimers(ed *TabEditor) {
+	if ed == nil {
+		return
+	}
+	if ed.mergeTimer != nil {
+		ed.mergeTimer.Stop()
+	}
+	if ed.saveTimer != nil {
+		ed.saveTimer.Stop()
+	}
+}
+
 func TestEditorDynamicRows(t *testing.T) {
 	ed := newTestEditor(t, 5)
+	defer stopEditorTimers(ed)
 	if len(ed.rows) != 5 {
 		t.Fatalf("rows = %d, want 5", len(ed.rows))
 	}
@@ -57,6 +70,7 @@ func TestEditorDynamicRows(t *testing.T) {
 
 func TestEditorUndoAfterClear(t *testing.T) {
 	ed := newTestEditor(t, 2)
+	defer stopEditorTimers(ed)
 	ed.Config.Prompts[0].Text = "KEEP"
 	ed.pushUndo()
 	ed.Clear()
@@ -72,6 +86,7 @@ func TestEditorUndoAfterClear(t *testing.T) {
 
 func TestEditorMergeModesInUI(t *testing.T) {
 	ed := newTestEditor(t, 2)
+	defer stopEditorTimers(ed)
 	ed.Config.Mode = data.MergeModeRaw
 	got := data.MergeTab(ed.Config)
 	if got != "P\nS\nP\nS" {
