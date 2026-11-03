@@ -18,7 +18,9 @@ func newTestEditor(t *testing.T, rows int) *TabEditor {
 		cfg.Prompts[i].Text = "P"
 		cfg.Sentences[i].Text = "S"
 	}
-	return NewTabEditor("测试", cfg, nil)
+	ed := NewTabEditor("测试", cfg, nil)
+	ed.rebuildRows()
+	return ed
 }
 
 func stopEditorTimers(ed *TabEditor) {

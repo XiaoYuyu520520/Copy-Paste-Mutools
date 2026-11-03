@@ -78,8 +78,8 @@ func TestFormatBytes(t *testing.T) {
 
 func TestRunDiskRoundTrip(t *testing.T) {
 	opts := DefaultDiskOptions()
-	opts.SizeBytes = 1 << 20 // 1 MiB
-	opts.BlockBytes = 64 << 10
+	opts.SizeBytes = 32 << 20 // 32 MiB，避免高速缓存命中时计时精度为 0
+	opts.BlockBytes = 1 << 20
 	opts.DropCaches = false
 
 	res, err := RunDisk(opts)
@@ -145,8 +145,8 @@ func TestRunDiskOverwriteExplicit(t *testing.T) {
 	opts.FilePath = path
 	opts.Overwrite = true
 	opts.KeepFile = true
-	opts.SizeBytes = 1 << 20
-	opts.BlockBytes = 64 << 10
+	opts.SizeBytes = 32 << 20
+	opts.BlockBytes = 1 << 20
 
 	res, err := RunDisk(opts)
 	if err != nil {

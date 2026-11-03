@@ -85,7 +85,6 @@ func NewTabEditor(title string, tab data.TabConfig, win fyne.Window) *TabEditor 
 
 func (e *TabEditor) build() {
 	e.rowsBox = container.NewVBox()
-	e.rebuildRows()
 
 	e.preview = makeCodeEntry()
 	e.preview.Disable()
@@ -122,6 +121,10 @@ func (e *TabEditor) rebuildRows() {
 
 // View 返回整个编辑器页面。
 func (e *TabEditor) View() fyne.CanvasObject {
+	// 延迟到真正展示时再创建区块控件，减少构造阶段的无谓布局与字体测量。
+	if len(e.rows) == 0 {
+		e.rebuildRows()
+	}
 	e.rowsScroll = container.NewVScroll(e.rowsBox)
 	previewPanel := e.previewPanel()
 	top := e.toolbar()

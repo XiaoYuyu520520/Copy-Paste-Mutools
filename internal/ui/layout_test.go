@@ -114,6 +114,7 @@ func TestMainWindow_LayoutStructure(t *testing.T) {
 	win := NewMainWindow(a, &cfg)
 	win.Show()
 	win.Resize(fyne.NewSize(1240, 820))
+	defer win.Close()
 
 	root := win.Canvas().Content()
 	if root == nil {
@@ -151,6 +152,7 @@ func TestLeftRail_ShowsPageSwitcher(t *testing.T) {
 	win := NewMainWindow(a, &cfg)
 	win.Show()
 	win.Resize(fyne.NewSize(1240, 820))
+	defer win.Close()
 
 	root := win.Canvas().Content()
 
