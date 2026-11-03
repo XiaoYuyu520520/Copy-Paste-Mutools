@@ -54,45 +54,121 @@ func newMorePage(s *store, a fyne.App) *morePage {
 	return p
 }
 
-// aiSettings 返回 API 配置表单。
+// aiSettings 返回 API 配置表单（支持多个服务商）。
 func (p *morePage) aiSettings() fyne.CanvasObject {
-	cfg := p.store.AIConfig()
+	cfg := p.store.Config()
+	cfg.EnsureProviders()
+	providers := append([]data.AIProvider(nil), cfg.Providers...)
+	active := cfg.ActiveProvider
+	if active < 0 || active >= len(providers) {
+		active = 0
+	}
+
+	name := widget.NewEntry()
+	name.SetPlaceHolder("服务商名称，例如 OpenAI / DeepSeek / 本地 Ollama")
 
 	baseURL := widget.NewEntry()
-	baseURL.SetText(cfg.BaseURL)
 	baseURL.SetPlaceHolder("https://api.openai.com/v1")
 
 	apiKey := widget.NewPasswordEntry()
-	apiKey.SetText(cfg.APIKey)
-	apiKey.SetPlaceHolder("sk-...")
+	apiKey.SetPlaceHolder("sk-...（本地服务可留空）")
 
 	model := widget.NewEntry()
-	model.SetText(cfg.Model)
 	model.SetPlaceHolder("gpt-4o-mini")
 
 	system := widget.NewMultiLineEntry()
-	system.SetText(cfg.System)
 	system.SetPlaceHolder("可选的系统提示词")
 	system.Wrapping = fyne.TextWrapWord
 
 	status := widget.NewLabel("")
 
+	load := func(i int) {
+		if i < 0 || i >= len(providers) {
+			return
+		}
+		active = i
+		name.SetText(providers[i].Name)
+		baseURL.SetText(providers[i].BaseURL)
+		apiKey.SetText(providers[i].APIKey)
+		model.SetText(providers[i].Model)
+		system.SetText(providers[i].System)
+	}
+
+	var providerSel *widget.Select
+	providerSel = widget.NewSelect(nil, func(string) {
+		idx := providerSel.SelectedIndex()
+		if idx >= 0 && idx < len(providers) {
+			load(idx)
+		}
+	})
+	refreshOpts := func() {
+		opts := make([]string, len(providers))
+		for i, pr := range providers {
+			if pr.Name == "" {
+				opts[i] = fmt.Sprintf("服务商 %d", i+1)
+			} else {
+				opts[i] = pr.Name
+			}
+		}
+		providerSel.Options = opts
+		if active >= 0 && active < len(opts) {
+			providerSel.SetSelectedIndex(active)
+		}
+	}
+
+	load(active)
+	refreshOpts()
+
+	addBtn := widget.NewButton("新增", func() {
+		providers = append(providers, data.AIProvider{Name: fmt.Sprintf("服务商 %d", len(providers)+1)})
+		active = len(providers) - 1
+		refreshOpts()
+		load(active)
+		status.SetText("已新增服务商，填写后保存")
+	})
+	delBtn := widget.NewButton("删除", func() {
+		if len(providers) <= 1 {
+			status.SetText("至少保留一个服务商")
+			return
+		}
+		providers = append(providers[:active], providers[active+1:]...)
+		if active >= len(providers) {
+			active = len(providers) - 1
+		}
+		refreshOpts()
+		load(active)
+		status.SetText("已删除，记得保存")
+	})
+
 	save := widget.NewButtonWithIcon("保存配置", theme.DocumentSaveIcon(), func() {
-		newCfg := data.AIConfig{
+		newProvider := data.AIProvider{
+			Name:    strings.TrimSpace(name.Text),
 			BaseURL: strings.TrimSpace(baseURL.Text),
 			APIKey:  strings.TrimSpace(apiKey.Text),
 			Model:   strings.TrimSpace(model.Text),
 			System:  system.Text,
 		}
-		p.store.Update(func(c *data.Config) { c.AI = &newCfg })
+		if newProvider.Name == "" {
+			newProvider.Name = "未命名服务"
+		}
+		providers[active] = newProvider
+		p.store.Update(func(c *data.Config) {
+			c.SetProviders(providers, active)
+		})
 		if err := p.store.Save(); err != nil {
 			status.SetText("保存失败：" + err.Error())
 			return
 		}
+		cfg = p.store.Config()
+		providers = append([]data.AIProvider(nil), cfg.Providers...)
+		active = cfg.ActiveProvider
+		refreshOpts()
 		status.SetText("已保存")
 	})
 
 	return container.NewVBox(
+		container.NewBorder(nil, nil, widget.NewLabel("服务商"), container.NewHBox(addBtn, delBtn), providerSel),
+		bold("名称"), name,
 		bold("API 地址"), baseURL,
 		bold("API Key"), apiKey,
 		bold("模型"), model,

@@ -37,7 +37,7 @@ func (m *MainApp) build() {
 	cfg := m.store.Config()
 
 	m.editor = newEditorPage(m.store)
-	m.chat = newChatPage(m.store)
+	m.chat = newChatPage(m.store, m.win)
 	m.scan = newScanPage()
 	m.paint = newPaintPage()
 	m.more = newMorePage(m.store, m.app)

@@ -43,9 +43,7 @@ func newStore(a fyne.App) *store {
 			s.cfg = normalize(cfg)
 		}
 	}
-	if s.cfg.AI == nil {
-		s.cfg.AI = &data.AIConfig{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}
-	}
+	s.cfg.EnsureProviders()
 	return s
 }
 
@@ -149,33 +147,19 @@ func normalize(cfg data.Config) data.Config {
 	if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
 		cfg.ActiveTab = 0
 	}
+	cfg.EnsureProviders()
 	return cfg
 }
 
-// normalizeTab 保证两个列表都有 MaxRows 项。
+// normalizeTab 对齐两列长度并补齐区块元数据。
 func normalizeTab(t data.TabConfig) data.TabConfig {
-	t.Prompts = padItems(t.Prompts)
-	t.Sentences = padItems(t.Sentences)
-	return t
+	return data.NormalizeTab(t)
 }
 
-// padItems 把项目列表补齐/截断到 MaxRows。
-func padItems(items []data.Item) []data.Item {
-	out := make([]data.Item, data.MaxRows)
-	for i := 0; i < data.MaxRows; i++ {
-		if i < len(items) {
-			out[i] = items[i]
-		} else {
-			out[i] = data.Item{Enabled: true}
-		}
-	}
-	return out
-}
-
-// blankTab 返回一个空标签。
+// blankTab 返回一个默认区块数的空标签。
 func blankTab() data.TabConfig {
-	return data.TabConfig{
+	return data.NormalizeTab(data.TabConfig{
 		Prompts:   data.DefaultPrompts(),
 		Sentences: data.DefaultSentences(),
-	}
+	})
 }

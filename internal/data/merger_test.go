@@ -71,3 +71,69 @@ func TestMerge_WhitespacePreservesOuterSides(t *testing.T) {
 		t.Errorf("should never contain double newline: %q", got)
 	}
 }
+
+func TestMergeModes(t *testing.T) {
+	tc := TabConfig{
+		Prompts:   []Item{{Text: "P1", Enabled: true}, {Text: "P2", Enabled: true}},
+		Sentences: []Item{{Text: "S1", Enabled: true}, {Text: "S2", Enabled: false}},
+		Separator: "---\n",
+	}
+
+	if got := MergeTabMode(tc, MergeModeRaw); got != "P1\nS1\nP2" {
+		t.Errorf("raw = %q", got)
+	}
+	wantMD := "## 区块 1\n\nP1\n\nS1\n\n## 区块 2\n\nP2"
+	if got := MergeTabMode(tc, MergeModeMarkdown); got != wantMD {
+		t.Errorf("markdown = %q, want %q", got, wantMD)
+	}
+	if got := MergeTabMode(tc, MergeModeCustom); got != "P1\nS1---\nP2" {
+		t.Errorf("custom = %q", got)
+	}
+	if got := MergeTabMode(tc, MergeModeNatural); got != "P1：\nS1，\nP2。" {
+		t.Errorf("natural = %q", got)
+	}
+}
+
+func TestNormalizeAndBlockOps(t *testing.T) {
+	tc := TabConfig{Prompts: []Item{{Text: "a"}}, Sentences: []Item{{Text: "b"}}}
+	got := NormalizeTab(tc)
+	if len(got.Prompts) != 1 || len(got.Sentences) != 1 {
+		t.Fatalf("normalize should keep 1 block, got %d/%d", len(got.Prompts), len(got.Sentences))
+	}
+	if len(got.BlockNames) != 1 || len(got.Collapsed) != 1 {
+		t.Fatalf("metadata not aligned")
+	}
+
+	got = ResizeTab(got, DefaultRows)
+	if len(got.Prompts) != DefaultRows {
+		t.Fatalf("resize failed: %d", len(got.Prompts))
+	}
+
+	more := AddBlock(got)
+	if len(more.Prompts) != DefaultRows+1 {
+		t.Fatalf("add block failed: %d", len(more.Prompts))
+	}
+
+	dup := DuplicateBlock(got, 0)
+	if dup.Prompts[1].Text != "a" || dup.Sentences[1].Text != "b" {
+		t.Fatalf("duplicate failed: %+v", dup.Prompts[:2])
+	}
+
+	moved := MoveBlock(dup, 0, 2)
+	if moved.Prompts[2].Text != "a" || moved.Prompts[1].Text != "" || moved.Prompts[0].Text != "a" {
+		t.Fatalf("move failed: %+v", moved.Prompts[:4])
+	}
+
+	removed := RemoveBlock(got, 0)
+	if len(removed.Prompts) != DefaultRows-1 {
+		t.Fatalf("remove failed: %d", len(removed.Prompts))
+	}
+	// 至少保留一个区块
+	one := ResizeTab(got, 1)
+	if len(one.Prompts) != 1 {
+		t.Fatalf("resize to 1 failed: %d", len(one.Prompts))
+	}
+	if kept := RemoveBlock(one, 0); len(kept.Prompts) != 1 {
+		t.Fatalf("should keep at least 1 block, got %d", len(kept.Prompts))
+	}
+}

@@ -2,6 +2,9 @@ package mobile
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -12,30 +15,29 @@ import (
 	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/data"
 )
 
-// editorPage 是提示词 + 语句的合并编辑器。
-//
-// 手机屏幕窄，因此每一行做成「两行」：
-//
-//	[☑] 提示词 ______________________
-//	[☑] 语句   ______________________
-//
-// 底部是实时合并预览 + 复制按钮。
+// editorPage 是提示词 + 语句的合并编辑器（手机端）。
 type editorPage struct {
 	store   *store
 	root    fyne.CanvasObject
-	body    *fyne.Container
+	rowBox  *fyne.Container
+	scroll  *container.Scroll
 	select1 *widget.Select
 
-	rows    []*editorRow
+	nameEntry *widget.Entry
+	modeSel   *widget.Select
+	sepEntry  *widget.Entry
+	sepWrap   *fyne.Container
+
+	rows    []*mobileEditorRow
 	preview *widget.Entry
 	status  *widget.Label
+	count   *widget.Label
 
 	updating bool
 }
 
-type editorRow struct {
-	promptOn, sentenceOn     *widget.Check
-	promptText, sentenceText *widget.Entry
+type mobileEditorRow struct {
+	root fyne.CanvasObject
 }
 
 func newEditorPage(s *store) *editorPage {
@@ -44,58 +46,104 @@ func newEditorPage(s *store) *editorPage {
 	p.select1 = widget.NewSelect(nil, func(string) { p.onTabChanged() })
 	addBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), p.addTab)
 	delBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), p.deleteTab)
-
 	top := container.NewBorder(nil, nil, nil, container.NewHBox(addBtn, delBtn), p.select1)
 
-	for i := 0; i < data.MaxRows; i++ {
-		p.rows = append(p.rows, p.newRow(i))
+	p.nameEntry = widget.NewEntry()
+	p.nameEntry.SetPlaceHolder("标签名称")
+	p.nameEntry.OnChanged = func(text string) {
+		if p.updating {
+			return
+		}
+		idx := p.selectedTab()
+		p.store.Update(func(c *data.Config) {
+			if idx >= 0 && idx < len(c.Tabs) {
+				c.Tabs[idx].Name = text
+			}
+		})
+		p.store.SaveDebounced()
 	}
+
+	p.modeSel = widget.NewSelect([]string{
+		mobileModeLabel(data.MergeModeNatural),
+		mobileModeLabel(data.MergeModeRaw),
+		mobileModeLabel(data.MergeModeMarkdown),
+		mobileModeLabel(data.MergeModeCustom),
+	}, func(string) {
+		if p.updating {
+			return
+		}
+		mode := mobileModeValue(p.modeSel.Selected)
+		idx := p.selectedTab()
+		p.store.Update(func(c *data.Config) {
+			if idx >= 0 && idx < len(c.Tabs) {
+				c.Tabs[idx].Mode = mode
+			}
+		})
+		p.updateSepVisibility()
+		p.store.SaveDebounced()
+		p.updatePreview()
+	})
+
+	p.sepEntry = widget.NewEntry()
+	p.sepEntry.SetPlaceHolder(`区块分隔符，例如 \n\n`)
+	p.sepEntry.OnChanged = func(text string) {
+		if p.updating {
+			return
+		}
+		idx := p.selectedTab()
+		p.store.Update(func(c *data.Config) {
+			if idx >= 0 && idx < len(c.Tabs) {
+				c.Tabs[idx].Separator = text
+			}
+		})
+		p.store.SaveDebounced()
+		p.updatePreview()
+	}
+	p.sepWrap = container.NewVBox(widget.NewLabel("自定义分隔符"), p.sepEntry)
+	p.sepWrap.Hide()
+
+	addBlockBtn := widget.NewButtonWithIcon("新增区块", theme.ContentAddIcon(), p.addBlock)
+	tplBtn := widget.NewButtonWithIcon("模板", theme.DocumentIcon(), p.showTemplates)
+
+	toolbar := container.NewVBox(
+		container.NewBorder(nil, nil, widget.NewLabel("标签名"), nil, p.nameEntry),
+		container.NewBorder(nil, nil, widget.NewLabel("拼接模式"), nil, p.modeSel),
+		p.sepWrap,
+		container.NewHBox(addBlockBtn, tplBtn),
+		widget.NewSeparator(),
+	)
+
+	p.rowBox = container.NewVBox()
+	p.scroll = container.NewVScroll(p.rowBox)
+
 	p.preview = widget.NewMultiLineEntry()
 	p.preview.Wrapping = fyne.TextWrapWord
 	p.preview.SetPlaceHolder("合并结果会显示在这里")
-	// 预览只需要读，不需要编辑。
 	p.preview.OnChanged = func(string) {}
 
 	p.status = widget.NewLabel("")
+	p.count = widget.NewLabel("")
 
 	copyBtn := widget.NewButtonWithIcon("复制结果", theme.ContentCopyIcon(), p.copyResult)
 	clearBtn := widget.NewButtonWithIcon("清空本站", theme.DeleteIcon(), p.clearTab)
 
-	form := container.NewVBox()
-	for _, r := range p.rows {
-		form.Add(container.NewVBox(
-			container.NewBorder(nil, nil, r.promptOn, nil, r.promptText),
-			container.NewBorder(nil, nil, r.sentenceOn, nil, r.sentenceText),
-			widget.NewSeparator(),
-		))
-	}
-
-	scroll := container.NewVScroll(form)
 	bottom := container.NewVBox(
 		widget.NewLabelWithStyle("合并预览", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		p.preview,
-		container.NewGridWithColumns(2, copyBtn, clearBtn),
+		container.NewBorder(nil, nil, p.count, nil, container.NewHBox(copyBtn, clearBtn)),
 		p.status,
 	)
 
-	p.root = container.NewBorder(top, bottom, nil, nil, scroll)
+	p.root = container.NewBorder(
+		container.NewVBox(top, toolbar),
+		bottom, nil, nil, p.scroll,
+	)
 	p.refreshTabs()
 	return p
 }
 
-// newRow 创建一行输入。
-func (p *editorPage) newRow(i int) *editorRow {
-	r := &editorRow{
-		promptOn:     widget.NewCheck("提示词", func(bool) { p.onEdit(i) }),
-		sentenceOn:   widget.NewCheck("语句", func(bool) { p.onEdit(i) }),
-		promptText:   widget.NewEntry(),
-		sentenceText: widget.NewEntry(),
-	}
-	r.promptText.SetPlaceHolder(fmt.Sprintf("提示词 %d", i+1))
-	r.sentenceText.SetPlaceHolder(fmt.Sprintf("语句 %d", i+1))
-	r.promptText.OnChanged = func(string) { p.onEdit(i) }
-	r.sentenceText.OnChanged = func(string) { p.onEdit(i) }
-	return r
+func (p *editorPage) selectedTab() int {
+	return p.select1.SelectedIndex()
 }
 
 // refreshTabs 从配置重建标签下拉框并载入当前标签内容。
@@ -103,17 +151,19 @@ func (p *editorPage) refreshTabs() {
 	cfg := p.store.Config()
 	names := make([]string, len(cfg.Tabs))
 	for i := range cfg.Tabs {
-		names[i] = fmt.Sprintf("标签 %d", i+1)
+		if cfg.Tabs[i].Name != "" {
+			names[i] = cfg.Tabs[i].Name
+		} else {
+			names[i] = fmt.Sprintf("标签 %d", i+1)
+		}
 	}
-	if cfg.ActiveTab >= len(names) || cfg.ActiveTab < 0 {
+	idx := cfg.ActiveTab
+	if idx < 0 || idx >= len(names) {
+		idx = 0
 		p.store.Update(func(c *data.Config) { c.ActiveTab = 0 })
 	}
 	p.updating = true
 	p.select1.SetOptions(names)
-	idx := p.store.Config().ActiveTab
-	if idx >= len(names) {
-		idx = 0
-	}
 	p.select1.SetSelectedIndex(idx)
 	p.updating = false
 	p.loadTab()
@@ -122,62 +172,210 @@ func (p *editorPage) refreshTabs() {
 // loadTab 把当前标签的数据填进控件。
 func (p *editorPage) loadTab() {
 	cfg := p.store.Config()
-	if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+	idx := p.selectedTab()
+	if idx < 0 || idx >= len(cfg.Tabs) {
 		return
 	}
-	tab := cfg.Tabs[cfg.ActiveTab]
+	tab := cfg.Tabs[idx]
 
 	p.updating = true
-	for i, r := range p.rows {
-		if i < len(tab.Prompts) {
-			r.promptText.SetText(tab.Prompts[i].Text)
-			r.promptOn.SetChecked(tab.Prompts[i].Enabled)
-		}
-		if i < len(tab.Sentences) {
-			r.sentenceText.SetText(tab.Sentences[i].Text)
-			r.sentenceOn.SetChecked(tab.Sentences[i].Enabled)
-		}
-	}
+	p.nameEntry.SetText(tab.Name)
+	p.modeSel.SetSelected(mobileModeLabel(data.EffectiveMode(tab.Mode)))
+	p.sepEntry.SetText(tab.Separator)
 	p.updating = false
+	p.updateSepVisibility()
+
+	p.rebuildRows(tab)
 	p.updatePreview()
 }
 
-// onEdit 把控件内容写回配置并刷新预览。
-func (p *editorPage) onEdit(i int) {
-	if p.updating {
-		return
+func (p *editorPage) updateSepVisibility() {
+	if data.EffectiveMode(mobileModeValue(p.modeSel.Selected)) == data.MergeModeCustom {
+		p.sepWrap.Show()
+	} else {
+		p.sepWrap.Hide()
 	}
-	promptText := p.rows[i].promptText.Text
-	promptOn := p.rows[i].promptOn.Checked
-	sentenceText := p.rows[i].sentenceText.Text
-	sentenceOn := p.rows[i].sentenceOn.Checked
+}
 
-	p.store.Update(func(cfg *data.Config) {
-		if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+// rebuildRows 根据标签内容重建区块控件。
+func (p *editorPage) rebuildRows(tab data.TabConfig) {
+	p.rowBox.Objects = nil
+	p.rows = p.rows[:0]
+	for i := range tab.Prompts {
+		if i >= len(tab.Sentences) {
+			break
+		}
+		row := p.makeRow(i, tab)
+		p.rows = append(p.rows, row)
+		if i > 0 {
+			p.rowBox.Add(widget.NewSeparator())
+		}
+		p.rowBox.Add(row.root)
+	}
+	p.rowBox.Refresh()
+}
+
+func (p *editorPage) makeRow(i int, tab data.TabConfig) *mobileEditorRow {
+	row := &mobileEditorRow{}
+
+	nameEntry := widget.NewEntry()
+	if i < len(tab.BlockNames) {
+		nameEntry.SetText(tab.BlockNames[i])
+	}
+	nameEntry.SetPlaceHolder(fmt.Sprintf("区块 %d 标题（可选）", i+1))
+	nameEntry.OnChanged = func(text string) {
+		p.updateBlock(i, func(t *data.TabConfig) {
+			if i < len(t.BlockNames) {
+				t.BlockNames[i] = text
+			}
+		})
+	}
+
+	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() { p.moveBlock(i, i-1) })
+	upBtn.Importance = widget.LowImportance
+	if i == 0 {
+		upBtn.Disable()
+	}
+	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() { p.moveBlock(i, i+1) })
+	downBtn.Importance = widget.LowImportance
+	if i == len(tab.Prompts)-1 {
+		downBtn.Disable()
+	}
+	dupBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() { p.duplicateBlock(i) })
+	dupBtn.Importance = widget.LowImportance
+	delBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() { p.removeBlock(i) })
+	delBtn.Importance = widget.LowImportance
+	if len(tab.Prompts) <= 1 {
+		delBtn.Disable()
+	}
+
+	header := container.NewBorder(nil, nil, nameEntry,
+		container.NewHBox(upBtn, downBtn, dupBtn, delBtn), nil)
+
+	promptOn := widget.NewCheck("提示词", nil)
+	promptOn.SetChecked(tab.Prompts[i].Enabled)
+	promptOn.OnChanged = func(b bool) {
+		p.updateBlock(i, func(t *data.TabConfig) {
+			if i < len(t.Prompts) {
+				t.Prompts[i].Enabled = b
+			}
+		})
+	}
+	sentenceOn := widget.NewCheck("语句", nil)
+	sentenceOn.SetChecked(tab.Sentences[i].Enabled)
+	sentenceOn.OnChanged = func(b bool) {
+		p.updateBlock(i, func(t *data.TabConfig) {
+			if i < len(t.Sentences) {
+				t.Sentences[i].Enabled = b
+			}
+		})
+	}
+
+	promptText := widget.NewMultiLineEntry()
+	promptText.SetText(tab.Prompts[i].Text)
+	promptText.SetPlaceHolder(fmt.Sprintf("提示词 %d", i+1))
+	promptText.Wrapping = fyne.TextWrapWord
+	promptText.OnChanged = func(text string) {
+		p.updateBlock(i, func(t *data.TabConfig) {
+			if i < len(t.Prompts) {
+				t.Prompts[i].Text = text
+			}
+		})
+	}
+	sentenceText := widget.NewMultiLineEntry()
+	sentenceText.SetText(tab.Sentences[i].Text)
+	sentenceText.SetPlaceHolder(fmt.Sprintf("语句 %d", i+1))
+	sentenceText.Wrapping = fyne.TextWrapWord
+	sentenceText.OnChanged = func(text string) {
+		p.updateBlock(i, func(t *data.TabConfig) {
+			if i < len(t.Sentences) {
+				t.Sentences[i].Text = text
+			}
+		})
+	}
+
+	row.root = container.NewVBox(
+		header,
+		container.NewBorder(nil, nil, promptOn, nil, promptText),
+		container.NewBorder(nil, nil, sentenceOn, nil, sentenceText),
+		widget.NewSeparator(),
+	)
+	return row
+}
+
+// updateBlock 在锁内更新当前标签的第 i 个区块。
+func (p *editorPage) updateBlock(i int, fn func(*data.TabConfig)) {
+	idx := p.selectedTab()
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
 			return
 		}
-		tab := &cfg.Tabs[cfg.ActiveTab]
-		if i < len(tab.Prompts) {
-			tab.Prompts[i].Text = promptText
-			tab.Prompts[i].Enabled = promptOn
-		}
-		if i < len(tab.Sentences) {
-			tab.Sentences[i].Text = sentenceText
-			tab.Sentences[i].Enabled = sentenceOn
-		}
+		fn(&c.Tabs[idx])
+		c.Tabs[idx] = data.NormalizeTab(c.Tabs[idx])
 	})
 	p.store.SaveDebounced()
 	p.updatePreview()
 }
 
+func (p *editorPage) moveBlock(from, to int) {
+	idx := p.selectedTab()
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
+			return
+		}
+		c.Tabs[idx] = data.MoveBlock(c.Tabs[idx], from, to)
+	})
+	p.store.SaveDebounced()
+	p.loadTab()
+}
+
+func (p *editorPage) duplicateBlock(i int) {
+	idx := p.selectedTab()
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
+			return
+		}
+		c.Tabs[idx] = data.DuplicateBlock(c.Tabs[idx], i)
+	})
+	p.store.SaveDebounced()
+	p.loadTab()
+}
+
+func (p *editorPage) removeBlock(i int) {
+	idx := p.selectedTab()
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
+			return
+		}
+		c.Tabs[idx] = data.RemoveBlock(c.Tabs[idx], i)
+	})
+	p.store.SaveDebounced()
+	p.loadTab()
+}
+
+func (p *editorPage) addBlock() {
+	idx := p.selectedTab()
+	p.store.Update(func(c *data.Config) {
+		if idx < 0 || idx >= len(c.Tabs) {
+			return
+		}
+		c.Tabs[idx] = data.AddBlock(c.Tabs[idx])
+	})
+	p.store.SaveDebounced()
+	p.loadTab()
+}
+
 // updatePreview 重新计算合并结果。
 func (p *editorPage) updatePreview() {
 	cfg := p.store.Config()
-	if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+	idx := p.selectedTab()
+	if idx < 0 || idx >= len(cfg.Tabs) {
 		p.preview.SetText("")
 		return
 	}
-	p.preview.SetText(data.MergeTab(cfg.Tabs[cfg.ActiveTab]))
+	text := data.MergeTab(cfg.Tabs[idx])
+	p.preview.SetText(text)
+	p.count.SetText(fmt.Sprintf("%d 字符", utf8.RuneCountInString(text)))
 }
 
 // onTabChanged 处理标签切换。
@@ -208,7 +406,6 @@ func (p *editorPage) addTab() {
 func (p *editorPage) deleteTab() {
 	cfg := p.store.Config()
 	if len(cfg.Tabs) <= 1 {
-		// 只剩一个时退化为「清空此标签」，与桌面版行为一致。
 		p.clearTab()
 		return
 	}
@@ -226,31 +423,23 @@ func (p *editorPage) deleteTab() {
 	p.refreshTabs()
 }
 
-// clearTab 清空当前标签的所有输入。
+// clearTab 清空当前标签的所有输入（保留区块结构）。
 func (p *editorPage) clearTab() {
-	cleared := false
+	idx := p.selectedTab()
 	p.store.Update(func(cfg *data.Config) {
-		if cfg.ActiveTab < 0 || cfg.ActiveTab >= len(cfg.Tabs) {
+		if idx < 0 || idx >= len(cfg.Tabs) {
 			return
 		}
-		cfg.Tabs[cfg.ActiveTab] = blankTab()
-		cleared = true
+		t := data.NormalizeTab(cfg.Tabs[idx])
+		for i := range t.Prompts {
+			t.Prompts[i].Text = ""
+			t.Sentences[i].Text = ""
+			t.BlockNames[i] = ""
+		}
+		cfg.Tabs[idx] = t
 	})
-	if !cleared {
-		return
-	}
-
-	p.updating = true
-	for _, r := range p.rows {
-		r.promptText.SetText("")
-		r.sentenceText.SetText("")
-		r.promptOn.SetChecked(true)
-		r.sentenceOn.SetChecked(true)
-	}
-	p.updating = false
-
 	p.store.SaveDebounced()
-	p.updatePreview()
+	p.loadTab()
 	p.status.SetText("已清空当前标签")
 }
 
@@ -267,5 +456,128 @@ func (p *editorPage) copyResult() {
 	p.status.SetText("已复制到剪贴板")
 }
 
-// 避免未使用导入（dialog 在后续版本会用于确认框）。
-var _ = dialog.ShowInformation
+// showTemplates 是手机端模板面板：应用/保存当前。
+func (p *editorPage) showTemplates() {
+	path := filepath.Join(filepath.Dir(p.store.path), "templates.json")
+	st := data.LoadTemplates(path)
+
+	sel := widget.NewSelect(nil, nil)
+	opts := make([]string, len(st.Templates))
+	for i, t := range st.Templates {
+		label := t.Name
+		if t.Category != "" {
+			label += " · " + t.Category
+		}
+		opts[i] = label
+	}
+	sel.Options = opts
+
+	var apply func()
+	apply = func() {
+		idx := sel.SelectedIndex()
+		if idx < 0 || idx >= len(st.Templates) {
+			p.status.SetText("请先选择模板")
+			return
+		}
+		tpl := st.Templates[idx]
+		vars := data.ExtractVariables(tpl.Tab)
+		tabIdx := p.selectedTab()
+		if len(vars) == 0 {
+			p.store.Update(func(c *data.Config) {
+				if tabIdx >= 0 && tabIdx < len(c.Tabs) {
+					c.Tabs[tabIdx] = data.NormalizeTab(tpl.Tab)
+				}
+			})
+			p.store.SaveDebounced()
+			p.loadTab()
+			return
+		}
+		entries := make(map[string]*widget.Entry, len(vars))
+		items := make([]*widget.FormItem, 0, len(vars))
+		for _, name := range vars {
+			e := widget.NewEntry()
+			e.SetPlaceHolder("{{" + name + "}}")
+			entries[name] = e
+			items = append(items, widget.NewFormItem(name, e))
+		}
+		dialog.ShowForm("填写模板变量", "应用", "取消", items, func(ok bool) {
+			if !ok {
+				return
+			}
+			vals := map[string]string{}
+			for k, e := range entries {
+				if v := strings.TrimSpace(e.Text); v != "" {
+					vals[k] = v
+				}
+			}
+			p.store.Update(func(c *data.Config) {
+				if tabIdx >= 0 && tabIdx < len(c.Tabs) {
+					c.Tabs[tabIdx] = data.ApplyVariables(tpl.Tab, vals)
+				}
+			})
+			p.store.SaveDebounced()
+			p.loadTab()
+		}, fyne.CurrentApp().Driver().AllWindows()[0])
+	}
+
+	saveBtn := widget.NewButtonWithIcon("保存当前为模板", theme.DocumentSaveIcon(), func() {
+		tabIdx := p.selectedTab()
+		cfg := p.store.Config()
+		if tabIdx < 0 || tabIdx >= len(cfg.Tabs) {
+			return
+		}
+		e := widget.NewEntry()
+		e.SetText(cfg.Tabs[tabIdx].Name)
+		dialog.ShowForm("保存为模板", "保存", "取消", []*widget.FormItem{
+			widget.NewFormItem("名称", e),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			tpl := data.NewTemplate(e.Text, "手机端", "", cfg.Tabs[tabIdx])
+			data.UpsertTemplate(&st, tpl)
+			if err := data.SaveTemplates(path, st); err != nil {
+				p.status.SetText("保存模板失败：" + err.Error())
+				return
+			}
+			opts = append(opts, tpl.Name)
+			sel.Options = opts
+			p.status.SetText("模板已保存")
+		}, fyne.CurrentApp().Driver().AllWindows()[0])
+	})
+
+	applyBtn := widget.NewButtonWithIcon("应用", theme.ConfirmIcon(), apply)
+	content := container.NewVBox(
+		widget.NewLabel("选择模板后点「应用」替换当前标签内容"),
+		sel,
+		applyBtn,
+		saveBtn,
+	)
+	dialog.ShowCustom("模板", "关闭", content, fyne.CurrentApp().Driver().AllWindows()[0])
+}
+
+func mobileModeLabel(m string) string {
+	switch m {
+	case data.MergeModeRaw:
+		return "原样拼接"
+	case data.MergeModeMarkdown:
+		return "Markdown"
+	case data.MergeModeCustom:
+		return "自定义分隔符"
+	default:
+		return "自然语言"
+	}
+}
+
+func mobileModeValue(label string) string {
+	switch label {
+	case mobileModeLabel(data.MergeModeRaw):
+		return data.MergeModeRaw
+	case mobileModeLabel(data.MergeModeMarkdown):
+		return data.MergeModeMarkdown
+	case mobileModeLabel(data.MergeModeCustom):
+		return data.MergeModeCustom
+	default:
+		return data.MergeModeNatural
+	}
+}

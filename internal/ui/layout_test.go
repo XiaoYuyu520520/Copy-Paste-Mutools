@@ -237,7 +237,7 @@ func TestTheme_NoColorNameButtonOverride(t *testing.T) {
 
 func TestEditorRow_LeftColumnVisible(t *testing.T) {
 	ed := NewTabEditor("Tab1", data.DefaultConfig().Tabs[0], nil)
-	row := ed.makeRow(0)
+	row := ed.makeRow(0).root
 	_ = row
 	t.Logf("row type=%T minSize=%v", row, row.MinSize())
 	// 断言 leftCol 在 row 的左边 110 px 范围内
@@ -263,16 +263,15 @@ func TestEditorRow_LeftColumnVisible(t *testing.T) {
 func TestEditorRow_DumpTree(t *testing.T) {
 	ed := NewTabEditor("Tab1", data.DefaultConfig().Tabs[0], nil)
 	for i := 0; i < 3; i++ {
-		row := ed.makeRow(i)
+		row := ed.makeRow(i).root
 		t.Logf("--- row %d (type=%T) ---", i, row)
 		t.Log(treeString(row, 0))
 	}
 }
 
 func TestEditorRow_CheckSizes(t *testing.T) {
-	ed := NewTabEditor("Tab1", data.DefaultConfig().Tabs[0], nil)
 	for i := 0; i < 3; i++ {
-		c := ed.checks[i][0]
+		c := widget.NewCheck("提示词", nil)
 		ms := c.MinSize()
 		t.Logf("check[%d][0] type=%T minSize=%v text=%q", i, c, ms, c.Text)
 	}
@@ -281,7 +280,7 @@ func TestEditorRow_CheckSizes(t *testing.T) {
 func TestEditorRow_FullLayoutMinSize(t *testing.T) {
 	ed := NewTabEditor("Tab1", data.DefaultConfig().Tabs[0], nil)
 	for i := 0; i < 5; i++ {
-		row := ed.makeRow(i)
+		row := ed.makeRow(i).root
 		ms := row.MinSize()
 		t.Logf("row %d type=%T minSize=%v", i, row, ms)
 		// 也 dump
@@ -294,7 +293,7 @@ func TestEditorRow_FullLayoutMinSize(t *testing.T) {
 	a := test.NewApp()
 	a.Settings().SetTheme(NewModernTheme(false))
 	c := software.NewCanvas()
-	c.SetContent(ed.makeRow(0))
+	c.SetContent(ed.makeRow(0).root)
 	c.Resize(fyne.NewSize(800, 150))
 	time.Sleep(100 * time.Millisecond)
 	img := c.Capture()

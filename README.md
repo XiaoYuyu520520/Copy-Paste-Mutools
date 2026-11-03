@@ -7,7 +7,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Fyne](https://img.shields.io/badge/Fyne-v2.8-8F4FFF?logo=appveyor&logoColor=white)](https://fyne.io/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-blue?logo=github)](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases)
+[![Release](https://img.shields.io/badge/Release-v1.1.0-blue?logo=github)](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases)
 [![Pages](https://img.shields.io/badge/Docs-GitHub%20Pages-success?logo=github)](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/)
 
 </div>
@@ -46,6 +46,7 @@
 | 🖥️ **桌面应用说明** | [docs/桌面应用.md](docs/桌面应用.md) |
 | 🔀 **Python → Go 迁移对照表** | [docs/迁移对照表.md](docs/迁移对照表.md) |
 | 🏗️ **构建与发布** | [docs/构建发布.md](docs/构建发布.md) |
+| 🧾 **功能升级记录** | [docs/功能升级记录.md](docs/功能升级记录.md) |
 | 🧭 **项目结构** | [docs/项目结构.md](docs/项目结构.md) |
 | 📱 **Android App** | [docs/安卓方案.md](docs/安卓方案.md) |
 | 📜 **历史教程（备忘）** | [docs/tutorials/](docs/tutorials/) |
@@ -62,14 +63,19 @@
 
 基于 Go + [Fyne](https://fyne.io) 的原生桌面程序，无浏览器内核。
 
-- **多标签**：顶部标签栏可任意增删，每个标签独立保存提示词 / 语句
-- **实时合并**：勾选与文本即时联动，底部只读框实时预览结果（200 ms 去抖）
+- **多标签 + 动态区块**：标签可任意增删、重命名；每个标签的提示词/语句区块数量不限，
+  支持新增/删除/复制/上移下移/折叠，可一键清空并撤销
+- **四种拼接模式**：自然语言（旧版行为）/ 原样（不加标点）/ Markdown（标题+段落）/ 自定义分隔符
+- **本地模板**：保存当前内容为模板、按分类与关键词筛选、`{{变量}}` 占位与填写预览、JSON 导入导出（`templates.json`）
+- **实时合并**：勾选与文本即时联动，底部只读框实时预览结果（200 ms 去抖），实时字数统计
 - **模拟键盘输入**：把合并结果逐字「真实键入」到目标程序，绕过粘贴检测
 - **文件夹树**：按 `tree` 风格输出目录结构，可屏蔽构建/依赖目录
 - **Markdown 渲染**：本地起服务 + 系统浏览器打开，GitHub 风格实时预览、代码高亮（[在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html)）
 - **2D 激光地图**：打开 `.pgm + .yaml` 即进入地图查看器（比例尺 / 测量 / 橡皮）（[在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html)）
 - **局域网扫描**：自动枚举网卡与子网，ICMP + TCP 回退，表格实时刷新、导出 CSV
-- **AI 聊天**：OpenAI 兼容 `/chat/completions` 流式对话，可接 OpenAI / DeepSeek / Qwen / Ollama
+- **AI 聊天**：OpenAI 兼容 `/chat/completions` 流式对话，可接任意厂商（多服务商配置保存/切换/测试连接）
+- **快捷键**：Ctrl+N 新建标签、Ctrl+S 保存、Ctrl+W 关闭标签、Ctrl+Enter 复制合并结果、Ctrl+1..9 切换标签
+- **窗口记忆**：窗口尺寸退出时保存、下次启动恢复
 - **亮/暗主题**：一键切换并记忆
 
 ### 2. `toolbox` — 统一命令行工具箱
@@ -102,8 +108,8 @@
 
 | 页 | 功能 | 说明 |
 | --- | --- | --- |
-| 编辑 | 提示词 + 语句合并 | 多标签、实时预览、一键复制 |
-| 聊天 | AI 对话 | 流式输出，配置 OpenAI 兼容接口 |
+| 编辑 | 提示词 + 语句合并 | 多标签、动态区块、拼接模式、模板、实时预览、一键复制 |
+| 聊天 | AI 对话 | 流式输出，多服务商配置；**会话本地持久化**，重启后自动恢复 |
 | 扫描 | 局域网扫描 | Android 无 ICMP 权限，**强制 TCP 探测** |
 | 画板 | 手指绘画 | 复用桌面版画板控件，支持导出 PNG |
 | 更多 | AI 设置 / 本地服务 / 系统信息 | 文件共享、性能监视、网速测试 |

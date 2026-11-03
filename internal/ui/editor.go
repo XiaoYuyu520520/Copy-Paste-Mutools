@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -21,23 +22,35 @@ const (
 )
 
 // TabEditor 单个标签页的全部 UI 与数据。
+//
+// 区块数量不再固定：支持新增/删除/复制/上移下移/折叠/重命名。
 type TabEditor struct {
 	Title  string
 	Config data.TabConfig
 
-	prompts     [data.MaxRows]*widget.Entry
-	sentences   [data.MaxRows]*widget.Entry
-	checks      [data.MaxRows][2]*widget.Check
+	rows    []*editorRow
+	rowsBox *fyne.Container
+
 	preview     *widget.Entry
 	previewCard *cardPanel
 	rowsScroll  *container.Scroll
 
+	nameEntry *widget.Entry
+	modeSel   *widget.Select
+	sepEntry  *widget.Entry
+	sepWrap   fyne.CanvasObject
+	countLbl  *widget.Label
+	undoBtn   *widget.Button
+
+	undo    data.TabConfig
+	hasUndo bool
+
 	// 圆角遮罩：Fyne 的 Entry 无圆角 API，用遮罩层把四角「咬」圆。
-	// 底色是烘焙进位图的，主题切换时必须重建（见 Recolor）。
 
 	OnMerged   func(text string)
 	OnDirty    func()
 	OnDirtyNow func()
+	OnRename   func()
 
 	mergeTimer *time.Timer
 	saveTimer  *time.Timer
@@ -46,52 +59,33 @@ type TabEditor struct {
 	window fyne.Window
 }
 
+// editorRow 是单个可折叠区块的控件集合。
+type editorRow struct {
+	root       fyne.CanvasObject
+	body       fyne.CanvasObject
+	name       *widget.Entry
+	promptOn   *widget.Check
+	sentenceOn *widget.Check
+	prompt     *widget.Entry
+	sentence   *widget.Entry
+}
+
 // NewTabEditor 创建一个新的标签编辑器。
 func NewTabEditor(title string, tab data.TabConfig, win fyne.Window) *TabEditor {
-	e := &TabEditor{Title: title, Config: tab, window: win}
+	e := &TabEditor{Title: title, Config: data.NormalizeTab(tab), window: win}
+	if e.Title == "" {
+		e.Title = "标签"
+	}
+	if e.Config.Name != "" {
+		e.Title = e.Config.Name
+	}
 	e.build()
 	return e
 }
 
 func (e *TabEditor) build() {
-	for i := 0; i < data.MaxRows; i++ {
-		e.checks[i][0] = widget.NewCheck("提示词", nil)
-		e.checks[i][0].SetChecked(e.Config.Prompts[i].Enabled)
-		e.checks[i][1] = widget.NewCheck("语句", nil)
-		e.checks[i][1].SetChecked(e.Config.Sentences[i].Enabled)
-
-		e.prompts[i] = makeCodeEntry()
-		e.prompts[i].SetPlaceHolder(fmt.Sprintf("提示词 %d（可粘贴多行）", i+1))
-		e.prompts[i].SetText(e.Config.Prompts[i].Text)
-		e.prompts[i].Wrapping = fyne.TextWrapWord
-
-		e.sentences[i] = makeCodeEntry()
-		e.sentences[i].SetPlaceHolder(fmt.Sprintf("语句 %d（可粘贴多行）", i+1))
-		e.sentences[i].SetText(e.Config.Sentences[i].Text)
-		e.sentences[i].Wrapping = fyne.TextWrapWord
-
-		idx := i
-		e.prompts[i].OnChanged = func(s string) {
-			e.Config.Prompts[idx].Text = s
-			e.scheduleMerge()
-			e.scheduleSave()
-		}
-		e.sentences[i].OnChanged = func(s string) {
-			e.Config.Sentences[idx].Text = s
-			e.scheduleMerge()
-			e.scheduleSave()
-		}
-		e.checks[i][0].OnChanged = func(b bool) {
-			e.Config.Prompts[idx].Enabled = b
-			e.scheduleMerge()
-			e.scheduleSave()
-		}
-		e.checks[i][1].OnChanged = func(b bool) {
-			e.Config.Sentences[idx].Enabled = b
-			e.scheduleMerge()
-			e.scheduleSave()
-		}
-	}
+	e.rowsBox = container.NewVBox()
+	e.rebuildRows()
 
 	e.preview = makeCodeEntry()
 	e.preview.Disable()
@@ -106,38 +100,151 @@ func makeCodeEntry() *widget.Entry {
 	return e
 }
 
+// rebuildRows 按当前 Config 重建全部区块控件。
+func (e *TabEditor) rebuildRows() {
+	if e.rowsBox == nil {
+		return
+	}
+	e.Config = data.NormalizeTab(e.Config)
+	e.rowsBox.Objects = nil
+	e.rows = e.rows[:0]
+	for i := range e.Config.Prompts {
+		row := e.makeRow(i)
+		e.rows = append(e.rows, row)
+		if i > 0 {
+			e.rowsBox.Add(widget.NewSeparator())
+		}
+		e.rowsBox.Add(row.root)
+	}
+	e.rowsBox.Refresh()
+	e.updateCount()
+}
+
 // View 返回整个编辑器页面。
-//
-// 布局：
-//   - Border(top=nil, bottom=previewPanel, center=rowsScroll)
-//   - rowsScroll 包了一个 VBox，5 行编辑器行
-//   - previewPanel = [卡片：标题 + 预览文本 + 按钮栏]
 func (e *TabEditor) View() fyne.CanvasObject {
-	e.rowsScroll = container.NewVScroll(e.rowsBox())
-	rowsScroll := e.rowsScroll
+	e.rowsScroll = container.NewVScroll(e.rowsBox)
 	previewPanel := e.previewPanel()
+	top := e.toolbar()
 
 	split := container.NewBorder(
-		nil,
+		top,
 		previewPanel,
 		nil,
 		nil,
-		rowsScroll,
+		e.rowsScroll,
 	)
-
 	return container.NewPadded(split)
 }
 
-// rowsBox 5 行编辑器的 VBox，中间加分隔线。
-func (e *TabEditor) rowsBox() *fyne.Container {
-	rows := make([]fyne.CanvasObject, 0, data.MaxRows*2-1)
-	for i := 0; i < data.MaxRows; i++ {
-		if i > 0 {
-			rows = append(rows, widget.NewSeparator())
+func (e *TabEditor) toolbar() fyne.CanvasObject {
+	e.nameEntry = widget.NewEntry()
+	e.nameEntry.SetText(e.Title)
+	e.nameEntry.SetPlaceHolder("标签名称")
+	e.nameEntry.OnChanged = func(s string) {
+		e.Title = s
+		e.Config.Name = s
+		e.scheduleSave()
+		if e.OnRename != nil {
+			e.OnRename()
 		}
-		rows = append(rows, e.makeRow(i))
 	}
-	return container.NewVBox(rows...)
+
+	modeOpts := []string{
+		mergeModeLabel(data.MergeModeNatural),
+		mergeModeLabel(data.MergeModeRaw),
+		mergeModeLabel(data.MergeModeMarkdown),
+		mergeModeLabel(data.MergeModeCustom),
+	}
+	e.modeSel = widget.NewSelect(modeOpts, func(opt string) {
+		e.Config.Mode = mergeModeValue(opt)
+		e.updateSeparatorVisibility()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	e.modeSel.SetSelected(mergeModeLabel(data.EffectiveMode(e.Config.Mode)))
+
+	e.sepEntry = widget.NewEntry()
+	e.sepEntry.SetText(e.Config.Separator)
+	e.sepEntry.SetPlaceHolder(`区块分隔符，例如 "\n\n" 或 "---"`)
+	e.sepEntry.OnChanged = func(s string) {
+		e.Config.Separator = s
+		e.scheduleMerge()
+		e.scheduleSave()
+	}
+	sepBox := container.NewVBox(
+		widget.NewLabelWithStyle("自定义分隔符（仅自定义模式生效）", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+		e.sepEntry,
+	)
+	e.sepWrap = sepBox
+	e.updateSeparatorVisibility()
+
+	addBtn := widget.NewButtonWithIcon("新增区块", theme.ContentAddIcon(), func() {
+		e.pushUndo()
+		e.Config = data.AddBlock(e.Config)
+		e.Config.BlockNames[len(e.Config.BlockNames)-1] = ""
+		e.rebuildRows()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	addBtn.Importance = widget.MediumImportance
+
+	tplBtn := widget.NewButtonWithIcon("模板", theme.DocumentIcon(), e.showTemplates)
+
+	e.countLbl = widget.NewLabel("")
+
+	titleRow := container.NewBorder(nil, nil,
+		widget.NewLabelWithStyle("标签名", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewHBox(widget.NewLabel("拼接模式"), e.modeSel),
+		e.nameEntry,
+	)
+	actionRow := container.NewBorder(nil, nil, nil,
+		container.NewHBox(e.countLbl),
+		container.NewHBox(addBtn, tplBtn, layout.NewSpacer()),
+	)
+
+	return container.NewVBox(
+		titleRow,
+		actionRow,
+		sepBox,
+		widget.NewSeparator(),
+	)
+}
+
+func (e *TabEditor) updateSeparatorVisibility() {
+	if e.sepWrap == nil {
+		return
+	}
+	if data.EffectiveMode(e.Config.Mode) == data.MergeModeCustom {
+		e.sepWrap.Show()
+	} else {
+		e.sepWrap.Hide()
+	}
+}
+
+func mergeModeLabel(m string) string {
+	switch m {
+	case data.MergeModeRaw:
+		return "原样拼接（不加标点）"
+	case data.MergeModeMarkdown:
+		return "Markdown（标题+段落）"
+	case data.MergeModeCustom:
+		return "自定义分隔符"
+	default:
+		return "自然语言（旧版行为）"
+	}
+}
+
+func mergeModeValue(label string) string {
+	switch label {
+	case mergeModeLabel(data.MergeModeRaw):
+		return data.MergeModeRaw
+	case mergeModeLabel(data.MergeModeMarkdown):
+		return data.MergeModeMarkdown
+	case mergeModeLabel(data.MergeModeCustom):
+		return data.MergeModeCustom
+	default:
+		return data.MergeModeNatural
+	}
 }
 
 // previewPanel 合并预览面板：标题 + 预览框 + 按钮栏，整个装在一个 Card 里。
@@ -153,8 +260,7 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 		if text == "" {
 			return
 		}
-		app := fyne.CurrentApp()
-		if app != nil {
+		if app := fyne.CurrentApp(); app != nil {
 			app.Clipboard().SetContent(text)
 			if e.OnMerged != nil {
 				e.OnMerged("__copied__")
@@ -163,12 +269,17 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 	})
 	copyBtn.Importance = widget.HighImportance
 
+	e.undoBtn = widget.NewButtonWithIcon("撤销", theme.HistoryIcon(), e.undoLast)
+	e.undoBtn.Disable()
+
 	clearBtn := widget.NewButtonWithIcon("清空此标签", theme.ContentClearIcon(), func() {
-		dialog.ShowConfirm("清空", "确认清空此标签的全部内容？", func(ok bool) {
+		dialog.ShowConfirm("清空", "确认清空此标签的全部文本？可点「撤销」恢复。", func(ok bool) {
 			if !ok {
 				return
 			}
+			e.pushUndo()
 			e.Clear()
+			e.rebuildRows()
 			e.scheduleMerge()
 			e.scheduleSave()
 		}, e.window)
@@ -177,14 +288,13 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 
 	buttonBar := container.NewHBox(
 		clearBtn,
+		e.undoBtn,
 		layout.NewSpacer(),
 		copyBtn,
 	)
 
 	previewEntry := WrapExactHeight(e.preview, previewMinSize)
 
-	// 把整个预览面板（标题 + 预览 + 按钮栏）放进一个 Card，让背景色和边框与
-	// 编辑器行视觉风格统一。
 	body := container.NewBorder(
 		previewHeader,
 		container.NewVBox(
@@ -199,7 +309,6 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 	return panel.root
 }
 
-// makeRow 单行编辑器：左 = 行号 + 两个 checkbox；中 = 提示词；右 = 语句。
 // Recolor refreshes theme-dependent card layers without rebuilding the editor.
 func (e *TabEditor) Recolor() {
 	if e != nil && e.previewCard != nil {
@@ -207,24 +316,187 @@ func (e *TabEditor) Recolor() {
 	}
 }
 
-func (e *TabEditor) makeRow(i int) fyne.CanvasObject {
+// makeRow 单个区块：可折叠标题行 + 提示词/语句两列。
+func (e *TabEditor) makeRow(i int) *editorRow {
+	row := &editorRow{}
+
+	collapsed := i < len(e.Config.Collapsed) && e.Config.Collapsed[i]
+	collapseIcon := theme.MenuDropDownIcon()
+	if collapsed {
+		collapseIcon = theme.MenuExpandIcon()
+	}
+	collapseBtn := widget.NewButtonWithIcon("", collapseIcon, func() {
+		e.Config.Collapsed[i] = !e.Config.Collapsed[i]
+		e.rebuildRows()
+		e.scheduleSave()
+	})
+	collapseBtn.Importance = widget.LowImportance
+
+	row.name = widget.NewEntry()
+	name := ""
+	if i < len(e.Config.BlockNames) {
+		name = e.Config.BlockNames[i]
+	}
+	row.name.SetText(name)
+	row.name.SetPlaceHolder(fmt.Sprintf("区块 %d 标题（可选）", i+1))
+	row.name.OnChanged = func(s string) {
+		if i < len(e.Config.BlockNames) {
+			e.Config.BlockNames[i] = s
+			e.scheduleMerge()
+			e.scheduleSave()
+		}
+	}
+
+	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
+		e.pushUndo()
+		e.Config = data.MoveBlock(e.Config, i, i-1)
+		e.rebuildRows()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	upBtn.Importance = widget.LowImportance
+	if i == 0 {
+		upBtn.Disable()
+	}
+
+	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
+		e.pushUndo()
+		e.Config = data.MoveBlock(e.Config, i, i+1)
+		e.rebuildRows()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	downBtn.Importance = widget.LowImportance
+	if i == len(e.Config.Prompts)-1 {
+		downBtn.Disable()
+	}
+
+	copyBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		e.pushUndo()
+		e.Config = data.DuplicateBlock(e.Config, i)
+		e.rebuildRows()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	copyBtn.Importance = widget.LowImportance
+
+	delBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
+		if len(e.Config.Prompts) <= 1 {
+			return
+		}
+		e.pushUndo()
+		e.Config = data.RemoveBlock(e.Config, i)
+		e.rebuildRows()
+		e.scheduleMerge()
+		e.scheduleSave()
+	})
+	delBtn.Importance = widget.LowImportance
+	if len(e.Config.Prompts) <= 1 {
+		delBtn.Disable()
+	}
+
+	header := container.NewBorder(nil, nil,
+		container.NewHBox(collapseBtn, row.name),
+		container.NewHBox(upBtn, downBtn, copyBtn, delBtn),
+		nil,
+	)
+
+	row.root = container.NewVBox(header)
+	if collapsed {
+		return row
+	}
+
+	row.promptOn = widget.NewCheck("提示词", nil)
+	row.promptOn.SetChecked(e.Config.Prompts[i].Enabled)
+	row.sentenceOn = widget.NewCheck("语句", nil)
+	row.sentenceOn.SetChecked(e.Config.Sentences[i].Enabled)
+
+	row.prompt = makeCodeEntry()
+	row.prompt.SetPlaceHolder(fmt.Sprintf("提示词 %d（可粘贴多行）", i+1))
+	row.prompt.SetText(e.Config.Prompts[i].Text)
+	row.prompt.Wrapping = fyne.TextWrapWord
+
+	row.sentence = makeCodeEntry()
+	row.sentence.SetPlaceHolder(fmt.Sprintf("语句 %d（可粘贴多行）", i+1))
+	row.sentence.SetText(e.Config.Sentences[i].Text)
+	row.sentence.Wrapping = fyne.TextWrapWord
+
+	row.prompt.OnChanged = func(s string) {
+		if i < len(e.Config.Prompts) {
+			e.Config.Prompts[i].Text = s
+			e.scheduleMerge()
+			e.scheduleSave()
+		}
+	}
+	row.sentence.OnChanged = func(s string) {
+		if i < len(e.Config.Sentences) {
+			e.Config.Sentences[i].Text = s
+			e.scheduleMerge()
+			e.scheduleSave()
+		}
+	}
+	row.promptOn.OnChanged = func(b bool) {
+		if i < len(e.Config.Prompts) {
+			e.Config.Prompts[i].Enabled = b
+			e.scheduleMerge()
+			e.scheduleSave()
+		}
+	}
+	row.sentenceOn.OnChanged = func(b bool) {
+		if i < len(e.Config.Sentences) {
+			e.Config.Sentences[i].Enabled = b
+			e.scheduleMerge()
+			e.scheduleSave()
+		}
+	}
+
 	rowLabel := widget.NewLabelWithStyle(
-		fmt.Sprintf("第 %d 行", i+1),
+		fmt.Sprintf("第 %d 块", i+1),
 		fyne.TextAlignCenter,
 		fyne.TextStyle{Bold: true},
 	)
-
-	leftCol := container.New(&editorLeftLayout{}, rowLabel, e.checks[i][0], e.checks[i][1])
-
-	// 文本域：固定高度；深色底 + 1 px 边框 + 4 px 圆角由主题统一提供
-	// （Entry 原生读取 SizeNameInputRadius / InputBorder / InputBackground）。
-	promptArea := WrapExactHeight(e.prompts[i], rowMinHeight)
-	sentenceArea := WrapExactHeight(e.sentences[i], rowMinHeight)
-
-	return container.New(
+	leftCol := container.New(&editorLeftLayout{}, rowLabel, row.promptOn, row.sentenceOn)
+	promptArea := WrapExactHeight(row.prompt, rowMinHeight)
+	sentenceArea := WrapExactHeight(row.sentence, rowMinHeight)
+	row.body = container.New(
 		&editorRowLayout{LeftWidth: 96, Gap: 8},
 		leftCol, promptArea, sentenceArea,
 	)
+	row.root.(*fyne.Container).Add(row.body)
+	return row
+}
+
+// pushUndo 保存当前快照，供撤销使用。
+func (e *TabEditor) pushUndo() {
+	e.undo = data.NormalizeTab(e.Config)
+	e.hasUndo = true
+	if e.undoBtn != nil {
+		e.undoBtn.Enable()
+	}
+}
+
+func (e *TabEditor) undoLast() {
+	if !e.hasUndo {
+		return
+	}
+	e.Config = data.NormalizeTab(e.undo)
+	e.Title = e.Config.Name
+	if e.Title == "" {
+		e.Title = "标签"
+	}
+	e.hasUndo = false
+	if e.undoBtn != nil {
+		e.undoBtn.Disable()
+	}
+	if e.nameEntry != nil {
+		e.nameEntry.SetText(e.Title)
+	}
+	e.rebuildRows()
+	e.scheduleMerge()
+	e.scheduleSave()
+	if e.OnRename != nil {
+		e.OnRename()
+	}
 }
 
 // scheduleMerge 触发一次合并刷新（去抖）。
@@ -237,11 +509,21 @@ func (e *TabEditor) scheduleMerge() {
 		fyne.Do(func() {
 			e.prevOutput = text
 			e.preview.SetText(text)
+			e.updateCount()
 			if e.OnMerged != nil {
 				e.OnMerged(text)
 			}
 		})
 	})
+}
+
+func (e *TabEditor) updateCount() {
+	if e.countLbl == nil {
+		return
+	}
+	n := e.ActiveCount()
+	chars := utf8.RuneCountInString(e.prevOutput)
+	e.countLbl.SetText(fmt.Sprintf("%d 个区块 · %d 字符", n, chars))
 }
 
 // scheduleSave 触发一次落盘（去抖）。
@@ -264,6 +546,7 @@ func (e *TabEditor) ForceMerge() {
 	text := data.MergeTab(e.Config)
 	e.prevOutput = text
 	e.preview.SetText(text)
+	e.updateCount()
 	if e.OnMerged != nil {
 		e.OnMerged(text)
 	}
@@ -282,22 +565,25 @@ func (e *TabEditor) FlushSave() {
 	}
 }
 
-// Clear 清空所有文本输入。
+// Clear 清空所有文本输入（保留区块结构）。
 func (e *TabEditor) Clear() {
-	for i := 0; i < data.MaxRows; i++ {
-		e.prompts[i].SetText("")
-		e.sentences[i].SetText("")
+	e.Config = data.NormalizeTab(e.Config)
+	for i := range e.Config.Prompts {
+		e.Config.Prompts[i].Text = ""
+		e.Config.Sentences[i].Text = ""
+		e.Config.BlockNames[i] = ""
 	}
 }
 
-// ActiveCount 返回合并后非空的行数（含勾选状态过滤）。
+// ActiveCount 返回合并后非空的区块数（含勾选状态过滤）。
 func (e *TabEditor) ActiveCount() int {
 	n := 0
-	for i := 0; i < data.MaxRows; i++ {
-		pText := trimSpaces(e.Config.Prompts[i].Text)
-		sText := trimSpaces(e.Config.Sentences[i].Text)
-		pHas := e.Config.Prompts[i].Enabled && pText != ""
-		sHas := e.Config.Sentences[i].Enabled && sText != ""
+	for i := range e.Config.Prompts {
+		if i >= len(e.Config.Sentences) {
+			break
+		}
+		pHas := e.Config.Prompts[i].Enabled && trimSpaces(e.Config.Prompts[i].Text) != ""
+		sHas := e.Config.Sentences[i].Enabled && trimSpaces(e.Config.Sentences[i].Text) != ""
 		if pHas || sHas {
 			n++
 		}

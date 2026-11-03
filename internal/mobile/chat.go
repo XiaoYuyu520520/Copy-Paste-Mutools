@@ -2,45 +2,50 @@ package mobile
 
 import (
 	"context"
-	"sort"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 // chatPage 是手机端的 AI 对话页。
 //
-// 桌面版把对话界面交给浏览器（内嵌 RikkaHub 风格页面）；
-// 手机端没有 WebView 组件，所以直接用 Fyne 控件实现，
-// 通过流式回调逐个分片更新最后一条消息。
+// 会话与消息持久化到应用目录（chat-sessions.json），
+// 退出/重启后自动恢复最近一次会话。
 type chatPage struct {
 	store *store
+	win   fyne.Window
 	root  fyne.CanvasObject
 
-	msgBox  *fyne.Container
-	scroll  *container.Scroll
-	input   *widget.Entry
-	sendBtn *widget.Button
-	status  *widget.Label
+	msgBox     *fyne.Container
+	scroll     *container.Scroll
+	input      *widget.Entry
+	sendBtn    *widget.Button
+	status     *widget.Label
+	sessionSel *widget.Select
 
-	// mu 保护下方全部共享状态（历史、发送态、取消函数、代次）。
-	mu      sync.Mutex
-	history []chatMsg
+	sessions *chatStore
+	updating bool // UI 线程内防止下拉框回调递归
 
-	// streaming 为 true 表示有一个请求在途；
-	// cancel 是它的取消函数；gen 是会话代次，
-	// 每次发送/清空自增，旧请求完成后若代次不匹配则不再碰 UI 状态。
+	// mu 保护下方全部共享状态（历史、发送态、取消函数、代次、当前会话）。
+	mu        sync.Mutex
+	history   []chatMsg
+	sessionID string
+
 	streaming bool
 	cancel    context.CancelFunc
 	gen       int
 }
 
-func newChatPage(s *store) *chatPage {
-	p := &chatPage{store: s}
+func newChatPage(s *store, win fyne.Window) *chatPage {
+	p := &chatPage{store: s, win: win}
+	p.sessions = newChatStore(filepath.Dir(s.path))
 
 	p.msgBox = container.NewVBox()
 	p.scroll = container.NewVScroll(p.msgBox)
@@ -52,19 +57,160 @@ func newChatPage(s *store) *chatPage {
 	p.sendBtn = widget.NewButtonWithIcon("发送", theme.MailSendIcon(), p.toggleSend)
 	p.status = widget.NewLabel("")
 
-	clearBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), p.clear)
-	top := container.NewBorder(nil, nil, widget.NewLabel("AI 对话"), container.NewHBox(clearBtn))
+	p.sessionSel = widget.NewSelect(nil, func(string) {
+		if p.updating {
+			return
+		}
+		idx := p.sessionSel.SelectedIndex()
+		list, _ := p.sessions.SessionList()
+		if idx < 0 || idx >= len(list) {
+			return
+		}
+		p.openSession(list[idx].ID)
+	})
+
+	newBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), p.newSession)
+	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), p.renameSession)
+	clearBtn := widget.NewButtonWithIcon("", theme.ContentClearIcon(), p.clear)
+	delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), p.deleteSession)
+	top := container.NewBorder(nil, nil,
+		widget.NewLabel("AI 对话"),
+		container.NewHBox(newBtn, renameBtn, clearBtn, delBtn),
+		p.sessionSel,
+	)
 
 	bottom := container.NewBorder(nil, p.status, nil, p.sendBtn, p.input)
 
 	p.root = container.NewBorder(top, bottom, nil, nil, p.scroll)
+	p.loadActive()
+	p.refreshSessions()
 	return p
 }
 
+// refreshSessions 重建会话下拉框。
+func (p *chatPage) refreshSessions() {
+	list, active := p.sessions.SessionList()
+	opts := make([]string, len(list))
+	activeIdx := 0
+	for i, s := range list {
+		title := s.Title
+		if title == "" {
+			title = "新会话"
+		}
+		opts[i] = fmt.Sprintf("%s", title)
+		if s.ID == active {
+			activeIdx = i
+		}
+	}
+	p.updating = true
+	p.sessionSel.Options = opts
+	p.sessionSel.SetSelectedIndex(activeIdx)
+	p.updating = false
+}
+
+// loadActive 把当前会话消息渲染到界面。
+func (p *chatPage) loadActive() {
+	s := p.sessions.Active()
+	p.mu.Lock()
+	p.sessionID = s.ID
+	p.history = append([]chatMsg(nil), s.Messages...)
+	p.mu.Unlock()
+
+	p.msgBox.Objects = nil
+	for _, m := range s.Messages {
+		if m.Role == "assistant" {
+			p.addBubble("助手", m.Content, false)
+		} else if m.Role == "user" {
+			p.addBubble("我", m.Content, true)
+		}
+	}
+	p.msgBox.Refresh()
+	p.status.SetText("")
+}
+
+// openSession 切换会话（必要时先取消在途请求）。
+func (p *chatPage) openSession(id string) {
+	if id == "" {
+		return
+	}
+	p.mu.Lock()
+	if p.sessionID == id {
+		p.mu.Unlock()
+		return
+	}
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.cancel = nil
+	p.streaming = false
+	p.gen++ // 旧请求完成后不再回写 UI
+	p.mu.Unlock()
+
+	p.sessions.SetActive(id)
+	p.loadActive()
+	p.refreshSessions()
+}
+
+func (p *chatPage) newSession() {
+	p.mu.Lock()
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.cancel = nil
+	p.streaming = false
+	p.gen++
+	p.mu.Unlock()
+
+	p.sessions.New()
+	p.loadActive()
+	p.refreshSessions()
+}
+
+func (p *chatPage) renameSession() {
+	p.mu.Lock()
+	id := p.sessionID
+	p.mu.Unlock()
+	if id == "" {
+		return
+	}
+	current := p.sessions.Active()
+	dialog.ShowEntryDialog("重命名会话", "输入新的会话名称", func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		p.sessions.Rename(id, text)
+		p.refreshSessions()
+	}, p.win)
+	p.status.SetText("当前会话：" + current.Title)
+}
+
+func (p *chatPage) deleteSession() {
+	p.mu.Lock()
+	id := p.sessionID
+	p.mu.Unlock()
+	if id == "" {
+		return
+	}
+	dialog.ShowConfirm("删除会话", "确认删除当前会话？此操作不可恢复。", func(ok bool) {
+		if !ok {
+			return
+		}
+		p.mu.Lock()
+		if p.cancel != nil {
+			p.cancel()
+		}
+		p.cancel = nil
+		p.streaming = false
+		p.gen++
+		p.mu.Unlock()
+		p.sessions.Delete(id)
+		p.loadActive()
+		p.refreshSessions()
+	}, p.win)
+}
+
 // toggleSend 在「发送」与「停止」之间切换。
-//
-// 发送状态在启动 goroutine 之前同步切换：连续快速点击只会启动一个请求，
-// 其余点击走「停止」分支取消当前请求。
 func (p *chatPage) toggleSend() {
 	text := strings.TrimSpace(p.input.Text)
 
@@ -82,8 +228,9 @@ func (p *chatPage) toggleSend() {
 		return
 	}
 
-	// 在锁内完成：追加历史、占位发送态、生成代次与取消函数。
+	sid := p.sessionID
 	p.history = append(p.history, chatMsg{Role: "user", Content: text})
+	p.sessions.Append(sid, chatMsg{Role: "user", Content: text})
 	history := make([]chatMsg, len(p.history))
 	copy(history, p.history)
 	p.streaming = true
@@ -100,18 +247,15 @@ func (p *chatPage) toggleSend() {
 		p.sendBtn.SetText("停止")
 		p.sendBtn.SetIcon(theme.CancelIcon())
 	})
+	p.refreshSessions()
 
-	go p.send(ctx, cancel, history, gen)
+	go p.send(ctx, cancel, history, gen, sid)
 }
 
 // send 发起一次对话请求。只在 toggleSend 确认独占后由 goroutine 调用。
-func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history []chatMsg, gen int) {
+func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history []chatMsg, gen int, sid string) {
 	defer cancel()
 
-	// 助手气泡先占位，流式分片直接往里追加。
-	//
-	// fyne.Do 只能调度不返回值的函数，因此用 channel 把主线程创建的对象带回来；
-	// 这里在 goroutine 里，阻塞等待不会卡住 UI。
 	bubbleCh := make(chan fyne.CanvasObject, 1)
 	fyne.Do(func() { bubbleCh <- p.addBubble("助手", "", false) })
 	bubble := <-bubbleCh
@@ -127,15 +271,19 @@ func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history 
 		func(full string) {},
 	)
 
-	// 完成时校验代次：期间用户清空过会话/发起新请求，就不回写旧状态。
+	finalText := sb.String()
+	if err == nil && ctx.Err() == nil && finalText != "" {
+		p.sessions.Append(sid, chatMsg{Role: "assistant", Content: finalText})
+	}
+
 	current := false
 	p.mu.Lock()
 	if p.gen == gen {
 		current = true
 		p.streaming = false
 		p.cancel = nil
-		if ctx.Err() == nil && sb.Len() > 0 {
-			p.history = append(p.history, chatMsg{Role: "assistant", Content: sb.String()})
+		if ctx.Err() == nil && finalText != "" {
+			p.history = append(p.history, chatMsg{Role: "assistant", Content: finalText})
 		}
 	}
 	p.mu.Unlock()
@@ -153,11 +301,12 @@ func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history 
 			} else {
 				p.status.SetText("出错：" + err.Error())
 			}
-			p.updateBubble(bubble, "助手", sb.String()+"\n\n[错误] "+err.Error(), false)
+			p.updateBubble(bubble, "助手", finalText+"\n\n[错误] "+err.Error(), false)
 			return
 		}
 		p.status.SetText("")
 	})
+	p.refreshSessions()
 }
 
 // addBubble 在消息列表末尾追加一个气泡，返回它的容器。
@@ -204,9 +353,12 @@ func (p *chatPage) clear() {
 	}
 	p.cancel = nil
 	p.streaming = false
-	p.gen++ // 让在途请求完成时不再回写状态
+	p.gen++
+	sid := p.sessionID
 	p.history = nil
 	p.mu.Unlock()
+
+	p.sessions.SetMessages(sid, nil)
 
 	fyne.Do(func() {
 		p.msgBox.Objects = nil
@@ -216,6 +368,3 @@ func (p *chatPage) clear() {
 		p.status.SetText("已清空会话")
 	})
 }
-
-// 保持 sort 导入（后续会话排序会用到）。
-var _ = sort.Strings

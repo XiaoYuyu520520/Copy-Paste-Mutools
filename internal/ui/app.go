@@ -98,7 +98,11 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	a.Settings().SetTheme(NewModernTheme(dark))
 
 	win := a.NewWindow("提示词+语句自动合并工具 · Pro (Native)")
-	win.Resize(fyne.NewSize(1240, 820))
+	if cfg.WindowWidth >= 900 && cfg.WindowHeight >= 600 {
+		win.Resize(fyne.NewSize(cfg.WindowWidth, cfg.WindowHeight))
+	} else {
+		win.Resize(fyne.NewSize(1240, 820))
+	}
 	win.CenterOnScreen()
 	m.win = win
 
@@ -137,7 +141,9 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	m.treePanel = NewTreePanel(m.win, func() { m.selectFeature(featEditor) })
 	m.aiPanel = NewAISettingsPanel(m.win, func() { m.selectFeature(featEditor) })
 	m.aiPanel.OnSave = m.onSaveAI
+	m.aiPanel.OnSaveProviders = m.onSaveProviders
 	m.aiPanel.Set(m.chatSettings())
+	m.aiPanel.SetProviders(m.cfg.Providers, m.cfg.ActiveProvider)
 
 	contentStack := container.NewStack(m.mainWS, m.simPanel.View(), m.treePanel.View(), m.aiPanel.View())
 
@@ -194,8 +200,15 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 		body,
 	))
 
-	win.SetOnClosed(func() { m.flushAll() })
+	win.SetOnClosed(func() {
+		if size := win.Canvas().Size(); size.Width > 0 && size.Height > 0 {
+			m.cfg.WindowWidth = size.Width
+			m.cfg.WindowHeight = size.Height
+		}
+		m.flushAll()
+	})
 	win.SetOnDropped(m.onFilesDropped)
+	m.installShortcuts(win)
 
 	m.selectFeature(featEditor)
 
@@ -267,6 +280,7 @@ func (m *MainApp) selectFeature(i int) {
 		m.setStatus("文件夹 Tree：选一个文件夹生成目录结构")
 	case featAISet:
 		m.aiPanel.Set(m.chatSettings())
+		m.aiPanel.SetProviders(m.cfg.Providers, m.cfg.ActiveProvider)
 		m.aiPanel.View().Show()
 		m.setStatus("AI 设置：填 API 地址 / Key / 模型，保存后点底部「AI 聊天」")
 	}
@@ -299,6 +313,28 @@ func (m *MainApp) onSaveAI(s chat.Settings) {
 	}
 }
 
+// onSaveProviders 保存多服务商列表，并同步当前生效配置。
+func (m *MainApp) onSaveProviders(list []data.AIProvider, active int) {
+	m.cfg.Providers = append([]data.AIProvider(nil), list...)
+	m.cfg.ActiveProvider = active
+	m.cfg.EnsureProviders()
+	if m.cfg.AI != nil {
+		m.aiMu.Lock()
+		m.aiCfg = chat.Settings{
+			BaseURL: m.cfg.AI.BaseURL,
+			APIKey:  m.cfg.AI.APIKey,
+			Model:   m.cfg.AI.Model,
+			System:  m.cfg.AI.System,
+		}
+		m.aiMu.Unlock()
+	}
+	if err := data.SaveConfig(*m.cfg); err != nil {
+		m.setStatus("AI 服务商保存失败：" + err.Error())
+		return
+	}
+	m.setStatus(fmt.Sprintf("已保存 %d 个服务商", len(m.cfg.Providers)))
+}
+
 // openAiChat 打开浏览器版 AI 聊天；未配置时提示先去「AI 设置」页。
 func (m *MainApp) openAiChat() {
 	if m.aiTool == nil {
@@ -326,6 +362,7 @@ func (m *MainApp) addBundle(title string, cfg data.TabConfig) {
 	}
 	editor.OnDirty = func() { m.scheduleSaveConfig() }
 	editor.OnDirtyNow = func() { m.saveConfigNow() }
+	editor.OnRename = func() { m.tabBar.SetBundles(m.bundles) }
 
 	bundle := &tabBundle{editor: editor}
 	m.bundles = append(m.bundles, bundle)

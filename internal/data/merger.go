@@ -1,9 +1,25 @@
 package data
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
-// MaxRows 每组（提示词+语句）最大行数。
-const MaxRows = 5
+// DefaultRows 是新建标签时的默认区块数（旧版固定 5 行的兼容值）。
+const DefaultRows = 5
+
+// MaxRows 保留旧常量名，表示默认区块数；区块数量本身已不再受限。
+//
+// Deprecated: 新代码请使用 DefaultRows。
+const MaxRows = DefaultRows
+
+// 合并模式。
+const (
+	MergeModeNatural  = "natural"  // 自然语言拼接（旧版行为）
+	MergeModeRaw      = "raw"      // 原样拼接，不添加任何标点
+	MergeModeMarkdown = "markdown" // Markdown 标题 + 段落
+	MergeModeCustom   = "custom"   // 区块之间使用自定义分隔符
+)
 
 // Item 描述单条输入文本及其是否启用。
 type Item struct {
@@ -12,41 +28,274 @@ type Item struct {
 }
 
 // TabConfig 单个标签的全部数据。
+//
+// Prompts/Sentences 保持旧版结构以兼容历史配置；区块数量不再固定，
+// 允许任意长度（两列长度由 NormalizeTab 对齐）。
 type TabConfig struct {
+	Name string `json:"name,omitempty"` // 用户自定义标签名
+
 	Prompts   []Item `json:"prompts"`
 	Sentences []Item `json:"sentences"`
+
+	BlockNames []string `json:"block_names,omitempty"` // 每个区块的自定义标题
+	Collapsed  []bool   `json:"collapsed,omitempty"`   // 每个区块的折叠状态
+
+	Mode      string `json:"merge_mode,omitempty"` // 合并模式，空 = natural
+	Separator string `json:"separator,omitempty"`  // custom 模式的分隔符
 }
 
-// MergeTab 计算单个标签合并结果。
-func MergeTab(t TabConfig) string {
+// NormalizeTab 对齐两列长度并补齐元数据，保持旧配置可读。
+func NormalizeTab(t TabConfig) TabConfig {
 	n := len(t.Prompts)
-	if n == 0 || n != len(t.Sentences) {
-		return ""
+	if len(t.Sentences) > n {
+		n = len(t.Sentences)
 	}
-	parts := make([]string, 0, n)
+	if n < 1 {
+		n = 1
+	}
+	prompts := make([]Item, n)
+	sentences := make([]Item, n)
+	for i := 0; i < n; i++ {
+		if i < len(t.Prompts) {
+			prompts[i] = t.Prompts[i]
+		} else {
+			prompts[i] = Item{Enabled: true}
+		}
+		if i < len(t.Sentences) {
+			sentences[i] = t.Sentences[i]
+		} else {
+			sentences[i] = Item{Enabled: true}
+		}
+	}
+	names := make([]string, n)
+	copy(names, t.BlockNames)
+	collapsed := make([]bool, n)
+	copy(collapsed, t.Collapsed)
+
+	t.Prompts = prompts
+	t.Sentences = sentences
+	t.BlockNames = names
+	t.Collapsed = collapsed
+	t.Mode = EffectiveMode(t.Mode)
+	return t
+}
+
+// ResizeTab 把标签调整为 n 个区块（n>=1），保留已有内容。
+func ResizeTab(t TabConfig, n int) TabConfig {
+	if n < 1 {
+		n = 1
+	}
+	t = NormalizeTab(t)
+	if n < len(t.Prompts) {
+		t.Prompts = t.Prompts[:n]
+		t.Sentences = t.Sentences[:n]
+		t.BlockNames = t.BlockNames[:n]
+		t.Collapsed = t.Collapsed[:n]
+		return t
+	}
+	for len(t.Prompts) < n {
+		t.Prompts = append(t.Prompts, Item{Enabled: true})
+		t.Sentences = append(t.Sentences, Item{Enabled: true})
+		t.BlockNames = append(t.BlockNames, "")
+		t.Collapsed = append(t.Collapsed, false)
+	}
+	return t
+}
+
+// AddBlock 在末尾追加一个空区块。
+func AddBlock(t TabConfig) TabConfig {
+	return ResizeTab(t, len(t.Prompts)+1)
+}
+
+// RemoveBlock 删除指定区块（至少保留一个）。
+func RemoveBlock(t TabConfig, idx int) TabConfig {
+	t = NormalizeTab(t)
+	if len(t.Prompts) <= 1 || idx < 0 || idx >= len(t.Prompts) {
+		return t
+	}
+	t.Prompts = append(t.Prompts[:idx], t.Prompts[idx+1:]...)
+	t.Sentences = append(t.Sentences[:idx], t.Sentences[idx+1:]...)
+	t.BlockNames = append(t.BlockNames[:idx], t.BlockNames[idx+1:]...)
+	t.Collapsed = append(t.Collapsed[:idx], t.Collapsed[idx+1:]...)
+	return t
+}
+
+// MoveBlock 把区块从 from 移到 to（用于上移/下移/拖拽排序）。
+func MoveBlock(t TabConfig, from, to int) TabConfig {
+	t = NormalizeTab(t)
+	n := len(t.Prompts)
+	if from < 0 || from >= n || to < 0 || to >= n || from == to {
+		return t
+	}
+	// 通用切片移动（from<to 与 from>to 两个方向）。
+	rotate := func(vals []Item) {
+		v := vals[from]
+		if from < to {
+			copy(vals[from:to], vals[from+1:to+1])
+		} else {
+			copy(vals[to+1:from+1], vals[to:from])
+		}
+		vals[to] = v
+	}
+	rotate(t.Prompts)
+	rotate(t.Sentences)
+
+	names := t.BlockNames
+	name := names[from]
+	if from < to {
+		copy(names[from:to], names[from+1:to+1])
+	} else {
+		copy(names[to+1:from+1], names[to:from])
+	}
+	names[to] = name
+
+	col := t.Collapsed
+	c := col[from]
+	if from < to {
+		copy(col[from:to], col[from+1:to+1])
+	} else {
+		copy(col[to+1:from+1], col[to:from])
+	}
+	col[to] = c
+	return t
+}
+
+// DuplicateBlock 复制指定区块到其后。
+func DuplicateBlock(t TabConfig, idx int) TabConfig {
+	t = NormalizeTab(t)
+	if idx < 0 || idx >= len(t.Prompts) {
+		return t
+	}
+	insert := func(vals []Item, v Item) []Item {
+		out := make([]Item, 0, len(vals)+1)
+		out = append(out, vals[:idx+1]...)
+		out = append(out, v)
+		out = append(out, vals[idx+1:]...)
+		return out
+	}
+	t.Prompts = insert(t.Prompts, t.Prompts[idx])
+	t.Sentences = insert(t.Sentences, t.Sentences[idx])
+
+	names := make([]string, 0, len(t.BlockNames)+1)
+	names = append(names, t.BlockNames[:idx+1]...)
+	names = append(names, t.BlockNames[idx])
+	names = append(names, t.BlockNames[idx+1:]...)
+	t.BlockNames = names
+
+	col := make([]bool, 0, len(t.Collapsed)+1)
+	col = append(col, t.Collapsed[:idx+1]...)
+	col = append(col, t.Collapsed[idx])
+	col = append(col, t.Collapsed[idx+1:]...)
+	t.Collapsed = col
+	return t
+}
+
+// EffectiveMode 返回合法模式；空/未知值回落到 natural。
+func EffectiveMode(mode string) string {
+	switch mode {
+	case MergeModeRaw, MergeModeMarkdown, MergeModeCustom:
+		return mode
+	default:
+		return MergeModeNatural
+	}
+}
+
+// MergeTab 按标签自身配置计算合并结果（默认自然语言模式）。
+func MergeTab(t TabConfig) string {
+	return MergeTabMode(t, t.Mode)
+}
+
+// MergeTabMode 使用指定模式计算合并结果。
+//
+// 注意：自然语言模式保留旧版「提示词：换行语句」与中文标点；
+// raw/markdown/custom 不会自动添加中文标点，避免破坏代码与结构化文本。
+func MergeTabMode(t TabConfig, mode string) string {
+	mode = EffectiveMode(mode)
+	n := len(t.Prompts)
+	if len(t.Sentences) < n {
+		n = len(t.Sentences)
+	}
+	blocks := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		p := t.Prompts[i]
 		s := t.Sentences[i]
-		pText := strings.TrimRight(p.Text, " \t\r\n")
-		sText := strings.TrimLeft(s.Text, " \t\r\n")
-		pHas := pText != ""
-		sHas := sText != ""
-		includeP := p.Enabled && pHas
-		includeS := s.Enabled && sHas
-		if !includeP && !includeS {
-			continue
-		}
-		switch {
-		case includeP && includeS:
-			parts = append(parts, pText+"：\n"+sText)
-		case includeP:
-			parts = append(parts, pText)
-		default:
-			parts = append(parts, sText)
+		pHas := p.Enabled && strings.TrimSpace(p.Text) != ""
+		sHas := s.Enabled && strings.TrimSpace(s.Text) != ""
+
+		switch mode {
+		case MergeModeRaw:
+			parts := make([]string, 0, 2)
+			if pHas {
+				parts = append(parts, p.Text)
+			}
+			if sHas {
+				parts = append(parts, s.Text)
+			}
+			if len(parts) > 0 {
+				blocks = append(blocks, strings.Join(parts, "\n"))
+			}
+		case MergeModeMarkdown:
+			title := blockTitle(t, i)
+			var b strings.Builder
+			b.WriteString("## ")
+			b.WriteString(title)
+			if pHas {
+				b.WriteString("\n\n")
+				b.WriteString(strings.TrimSpace(p.Text))
+			}
+			if sHas {
+				b.WriteString("\n\n")
+				b.WriteString(strings.TrimSpace(s.Text))
+			}
+			blocks = append(blocks, b.String())
+		case MergeModeCustom:
+			parts := make([]string, 0, 2)
+			if pHas {
+				parts = append(parts, p.Text)
+			}
+			if sHas {
+				parts = append(parts, s.Text)
+			}
+			if len(parts) > 0 {
+				blocks = append(blocks, strings.Join(parts, "\n"))
+			}
+		default: // natural
+			pText := strings.TrimRight(p.Text, " \t\r\n")
+			sText := strings.TrimLeft(s.Text, " \t\r\n")
+			includeP := p.Enabled && pText != ""
+			includeS := s.Enabled && sText != ""
+			switch {
+			case includeP && includeS:
+				blocks = append(blocks, pText+"：\n"+sText)
+			case includeP:
+				blocks = append(blocks, pText)
+			case includeS:
+				blocks = append(blocks, sText)
+			}
 		}
 	}
-	if len(parts) == 0 {
+	if len(blocks) == 0 {
 		return ""
 	}
-	return strings.Join(parts, "，\n") + "。"
+	switch mode {
+	case MergeModeRaw:
+		return strings.Join(blocks, "\n")
+	case MergeModeMarkdown:
+		return strings.Join(blocks, "\n\n")
+	case MergeModeCustom:
+		sep := t.Separator
+		if sep == "" {
+			sep = "\n\n"
+		}
+		return strings.Join(blocks, sep)
+	default:
+		return strings.Join(blocks, "，\n") + "。"
+	}
+}
+
+func blockTitle(t TabConfig, i int) string {
+	if i < len(t.BlockNames) && strings.TrimSpace(t.BlockNames[i]) != "" {
+		return strings.TrimSpace(t.BlockNames[i])
+	}
+	return "区块 " + strconv.Itoa(i+1)
 }
