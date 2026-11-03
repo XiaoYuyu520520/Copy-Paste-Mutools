@@ -7,119 +7,149 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="common.css">
 <style>
-  html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;
-    font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;overflow:hidden}
-  #topbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;
-    background:#161b22;border-bottom:1px solid #30363d}
-  #topbar .title{font-weight:600}
-  #topbar .muted{color:#8b949e;font-size:12px}
-  #topbar .sp{flex:1}
-  #topbar button,#topbar a.link{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
-    padding:4px 12px;cursor:pointer;text-decoration:none;font-size:13px;line-height:1.5}
-  #topbar button:hover,#topbar a.link:hover{background:#30363d}
-  #topbar button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
-  #topbar button:disabled{opacity:.45;cursor:not-allowed}
-  #topbar label{font-size:12px;color:#8b949e}
-  #topbar input[type="range"]{width:110px}
-  #stage{height:calc(100% - 47px);overflow:auto;display:flex;align-items:center;justify-content:center;
-    background:#010409}
-  #mapwrap{position:relative;margin:24px}
-  #mapwrap canvas{position:absolute;left:0;top:0}
-  #mapwrap canvas#ov{cursor:crosshair}
-  #tip{padding:0 4px;color:#8b949e;font-size:12px}
-  #tip b{color:#e6edf3}
-  #drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:30;
-    background:rgba(31,111,235,.12);border:3px dashed #1f6feb;pointer-events:none}
-  #drop.on{display:flex}
-  #drop .hint{background:#1f6feb;color:#fff;padding:10px 22px;border-radius:999px;font-weight:700}
-  #emptyState{max-width:640px;text-align:center;color:#8b949e;padding:24px}
-  #emptyState .big{font-size:19px;font-weight:700;color:#e6edf3;margin-bottom:10px}
-  #emptyState .sub{font-size:13px;line-height:1.9;margin-bottom:16px}
-  #emptyState button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
-    padding:6px 16px;cursor:pointer}
-  #toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;z-index:40;
-    pointer-events:none;transition:opacity .2s,transform .2s;background:#161b22;color:#e6edf3;z-index:70;
-    border:1px solid #30363d;border-radius:8px;padding:7px 14px;font-size:13px;
-    box-shadow:0 6px 20px rgba(1,4,9,.6);max-width:70vw}
-  #toast.on{opacity:1;transform:translate(-50%,0)}
+  .wrap.wide { max-width: 1280px; }
 
-  /* ---------- 仅 YAML 时的编辑器 ---------- */
-  #yamlPane{display:none;height:calc(100% - 47px);background:#010409;padding:14px 16px}
-  #yamlPane.on{display:flex;flex-direction:column;gap:10px}
-  #yamlPane .head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  #yamlPane .head .t{font-weight:600}
-  #yamlPane .head .sp{flex:1}
-  #yamlPane .head button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;
-    padding:4px 12px;cursor:pointer;font-size:13px}
-  #yamlPane .head button:hover{background:#30363d}
-  #yamlPane .head button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff}
-  #yamlEditor{flex:1 1 auto;min-height:120px;resize:none;width:100%;background:#0d1117;color:#e6edf3;
-    border:1px solid #30363d;border-radius:8px;padding:12px 14px;
-    font:13px/1.7 ui-monospace,"Cascadia Mono",Consolas,monospace;outline:none}
-  #yamlEditor:focus{border-color:#1f6feb}
-  #yamlPane .foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#8b949e}
-  #yamlPane .err{color:#ff7b72}
-  #yamlPane .ok{color:#3fb950}
-  #yamlPane .warn{color:#d29922}
-  #yamlHint{font-size:12px;color:#8b949e;line-height:1.8}
-  #yamlHint b{color:#e6edf3}
+  /* 工具栏与其他工具页保持一致：使用 common.css 的 toolbar/button 样式 */
+  #topbar { margin: 0 0 14px; align-items: center; }
+  #topbar .sp { flex: 1; }
+  #topbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #topbar .brush { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  #topbar input[type="range"] { width: 110px; accent-color: var(--accent); }
+  #meta { max-width: 100%; }
+
+  /* 工作区：保持地图工具的大画布，但外框与卡片风格统一 */
+  #stage {
+    height: clamp(420px, calc(100vh - 360px), 820px);
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0a0d14;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  #mapwrap { position: relative; margin: 20px; }
+  #mapwrap canvas { position: absolute; left: 0; top: 0; }
+  #mapwrap canvas#ov { cursor: crosshair; }
+  #tip { padding: 8px 2px 0; color: var(--muted); font-size: 12px; }
+  #tip b { color: var(--text); }
+
+  #emptyState { max-width: 680px; text-align: center; padding: 28px; }
+  #emptyState .big { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
+  #emptyState .sub { color: var(--muted); font-size: 13px; line-height: 1.9; margin-bottom: 18px; }
+
+  /* 仅 YAML 时的编辑器 */
+  #yamlPane { display: none; }
+  #yamlPane.on { display: block; }
+  #yamlPane .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  #yamlPane .head .t { font-weight: 600; }
+  #yamlPane .head .sp { flex: 1; }
+  #yamlPane .head .muted { color: var(--muted); font-size: 12px; }
+  #yamlEditor { min-height: 240px; }
+  #yamlPane .foot { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  #yamlPane .err { color: var(--err); }
+  #yamlPane .ok { color: var(--ok); }
+  #yamlPane .warn { color: var(--warn); }
+  #yamlHint { font-size: 13px; color: var(--muted); line-height: 1.9; margin-top: 12px; }
+  #yamlHint b { color: var(--text); }
+
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 30;
+    background: rgba(58,150,255,.14); border: 3px dashed var(--accent); pointer-events: none; }
+  #drop.on { display: flex; }
+  #drop .hint { background: var(--accent); color: #fff; padding: 10px 22px; border-radius: 999px; font-weight: 700; }
+  #toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%,20px); opacity: 0; z-index: 70;
+    pointer-events: none; transition: opacity .2s, transform .2s; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 14px; font-size: 13px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45); max-width: 70vw; }
+  #toast.on { opacity: 1; transform: translate(-50%,0); }
+
+  @media (max-width: 640px) {
+    #stage { height: clamp(360px, calc(100vh - 320px), 640px); }
+    #topbar { gap: 8px; }
+    #topbar .sp { display: none; }
+  }
 </style>
 </head>
 <body>
-<div id="topbar">
-  <span class="title">2D 激光 SLAM 地图</span>
-  <span class="muted" id="meta">未加载地图</span>
-  <span class="sp"></span>
-  <button id="openBtn" title="选择 .pgm / .yaml（可一起选择）">打开地图…</button>
-  <button id="measureBtn" title="点击两次测量两点直线距离" disabled>测量尺子</button>
-  <button id="eraseBtn" title="把地图上的障碍物像素擦成空白" disabled>障碍物擦除</button>
-  <label>橡皮</label><input id="brush" type="range" min="1" max="40" value="8">
-  <button id="saveBtn" disabled>保存下载 .pgm + .yaml</button>
-  <button id="yamlBtn" style="display:none" title="编辑当前地图的 YAML 元数据">编辑 YAML</button>
-  <a class="link" href="index.html">工具总览</a>
-  <a class="link" href="markdown.html">Markdown →</a>
-  <a class="link" href="../index.html">文档首页</a>
-  <input id="file" type="file" multiple hidden accept=".pgm,.yaml,.yml">
-</div>
-<div id="stage">
-  <div id="emptyState">
-    <div class="big">打开 .pgm + .yaml 地图</div>
-    <div class="sub">
-      把 <code>.pgm</code> 与同名 <code>.yaml</code> 一起拖进页面，或点击下方按钮选择。<br>
-      有 <code>.yaml</code> 时启用比例尺与真实距离测量；<b>只拖入 .yaml 会打开 YAML 编辑器</b>，
-      只拖入 <code>.pgm</code> 也能预览 / 擦除 / 下载，距离按像素显示。
-    </div>
-    <button id="openBtn2">选择文件…</button>
-    <div style="margin-top:16px;font-size:12px;line-height:1.9;color:#8b949e">
-      需要离线桌面版？<a href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases" target="_blank" rel="noopener" style="color:#1f6feb">Releases 下载</a>
-      · 需求 / Bug：<a href="https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/issues" target="_blank" rel="noopener" style="color:#1f6feb">提交 Issue</a>
-    </div>
-  </div>
-  <div id="mapwrap" style="display:none">
-    <canvas id="map"></canvas>
-    <canvas id="ov"></canvas>
-  </div>
-</div>
+<div class="wrap wide">
+  <nav class="top">
+    <span class="brand">提示词复合工具箱 · 在线工具</span>
+    <a href="index.html">工具总览</a>
+    <a href="../index.html">文档首页</a>
+    <a href="base64.html">Base64</a>
+    <a href="qrcode.html">二维码</a>
+    <a href="codec.html">编解码检测</a>
+    <a href="markdown.html">Markdown</a>
+    <a href="mapview.html" class="active">激光地图</a>
+  </nav>
 
-<div id="yamlPane">
-  <div class="head">
-    <span class="t">YAML 编辑器</span>
-    <span class="muted" id="yamlName">map.yaml</span>
-    <span class="sp"></span>
-    <button id="yamlCheck">校验</button>
-    <button id="yamlCopy">复制</button>
-    <button id="yamlDownload">下载 .yaml</button>
-    <button id="yamlApply" class="primary" style="display:none">应用到当前地图</button>
-    <button id="yamlClose">关闭</button>
+  <h1>2D 激光 SLAM 地图查看器</h1>
+  <p class="sub">打开 <code>.pgm</code> + <code>.yaml</code> 即可比例尺显示、测距、擦除与导出；仅 YAML 时作为编辑器。全部在浏览器本地处理，不上传文件。</p>
+
+  <div class="card">
+    <div class="toolbar" id="topbar">
+      <button id="openBtn" title="选择 .pgm / .yaml（可一起选择）">打开地图…</button>
+      <button class="ghost" id="measureBtn" title="点击两次测量两点直线距离" disabled>测量尺子</button>
+      <button class="ghost" id="eraseBtn" title="把地图上的障碍物像素擦成空白" disabled>障碍物擦除</button>
+      <span class="brush">
+        <label for="brush">橡皮</label>
+        <input id="brush" type="range" min="1" max="40" value="8">
+      </span>
+      <button class="ghost" id="saveBtn" disabled>保存下载 .pgm + .yaml</button>
+      <button class="ghost" id="yamlBtn" style="display:none" title="编辑当前地图的 YAML 元数据">编辑 YAML</button>
+      <input id="file" type="file" multiple hidden accept=".pgm,.yaml,.yml">
+      <span class="sp"></span>
+      <span class="hint" id="meta">未加载地图</span>
+    </div>
+
+    <div id="stage">
+      <div id="emptyState">
+        <div class="big">打开 .pgm + .yaml 地图</div>
+        <div class="sub">
+          把 <code>.pgm</code> 与同名 <code>.yaml</code> 一起拖进页面，或点击下方按钮选择。<br>
+          有 <code>.yaml</code> 时启用比例尺与真实距离测量；<b>只拖入 .yaml 会打开 YAML 编辑器</b>，
+          只拖入 <code>.pgm</code> 也能预览 / 擦除 / 下载，距离按像素显示。
+        </div>
+        <button id="openBtn2">选择文件…</button>
+      </div>
+      <div id="mapwrap" style="display:none">
+        <canvas id="map"></canvas>
+        <canvas id="ov"></canvas>
+      </div>
+    </div>
   </div>
-  <textarea id="yamlEditor" spellcheck="false" placeholder="image: map.pgm&#10;resolution: 0.05&#10;origin: [0.0, 0.0, 0.0]&#10;negate: 0&#10;occupied_thresh: 0.65&#10;free_thresh: 0.196"></textarea>
-  <div id="yamlResult" class="foot"></div>
-  <div id="yamlHint">
-    <b>常用字段</b>：<code>image</code> 对应的 .pgm 文件名 · <code>resolution</code> 米/像素 ·
-    <code>origin: [x, y, yaw]</code> 地图左下角位姿 · <code>negate</code> 0/1 ·
-    <code>occupied_thresh</code> / <code>free_thresh</code> 0~1。<br>
-    校验只解析 map_server 常用字段；下载会保留你编辑后的完整文本。
+
+  <div class="card" id="yamlPane">
+    <div class="head">
+      <span class="t">YAML 编辑器</span>
+      <span class="muted" id="yamlName">map.yaml</span>
+      <span class="sp"></span>
+      <button class="ghost" id="yamlCheck">校验</button>
+      <button class="ghost" id="yamlCopy">复制</button>
+      <button class="ghost" id="yamlDownload">下载 .yaml</button>
+      <button id="yamlApply" style="display:none">应用到当前地图</button>
+      <button class="ghost" id="yamlClose">关闭</button>
+    </div>
+    <textarea id="yamlEditor" spellcheck="false" placeholder="image: map.pgm&#10;resolution: 0.05&#10;origin: [0.0, 0.0, 0.0]&#10;negate: 0&#10;occupied_thresh: 0.65&#10;free_thresh: 0.196"></textarea>
+    <div id="yamlResult" class="foot"></div>
+    <div id="yamlHint">
+      <b>常用字段</b>：<code>image</code> 对应的 .pgm 文件名 · <code>resolution</code> 米/像素 ·
+      <code>origin: [x, y, yaw]</code> 地图左下角位姿 · <code>negate</code> 0/1 ·
+      <code>occupied_thresh</code> / <code>free_thresh</code> 0~1。<br>
+      校验只解析 map_server 常用字段；下载会保留你编辑后的完整文本。
+    </div>
   </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">使用说明</h2>
+    <ul class="hint" style="margin:0;padding-left:20px">
+      <li>拖入 <code>.pgm + .yaml</code> 直接查看；只拖入 <code>.yaml</code> 会打开编辑器，只拖入 <code>.pgm</code> 按像素测量。</li>
+      <li>「测量尺子」点两次取两点；「障碍物擦除」按住拖动；双击地图可清空测量线。</li>
+      <li>修改后可「保存下载 .pgm + .yaml」，文件只在本地生成，不会上传。</li>
+    </ul>
+  </div>
+
+  <footer>Made with ❤️ by <a href="https://github.com/XiaoYuyu520520">XiaoYuyu520520</a> · MIT License</footer>
 </div>
 
 <div id="drop"><div class="hint">松手即打开地图 / YAML 编辑器</div></div>
@@ -473,8 +503,9 @@
   function showYamlPane(){
     $('yamlPane').classList.add('on');
     $('yamlApply').style.display = state.img ? '' : 'none';
-    if (state.img){ wrap.style.display = 'none'; }
-    else { emptyState.style.display = 'none'; }
+    // 统一为文档流的卡片布局后，滚动到编辑器可见位置（而不是整页替换）。
+    var pane = $('yamlPane');
+    if (pane.scrollIntoView) pane.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function hideYamlPane(){
