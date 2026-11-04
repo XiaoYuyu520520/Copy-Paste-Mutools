@@ -46,6 +46,10 @@ jobs:
       - name: go test
         run: go test ./...
 
+      # 竞态检测：并发相关的改动（配置快照、扫描取消、流式刷新）必须有 race 覆盖。
+      - name: go test -race（核心包）
+        run: go test -race ./internal/data/... ./internal/netscan/... ./internal/lanscan/... ./internal/mobile/...
+
       - name: gofmt check
         run: |
           unformatted=$(gofmt -l ./cmd ./internal)
@@ -54,6 +58,30 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # 网页版工具的浏览器冒烟测试（Playwright）
+  # ---------------------------------------------------------------------------
+  web:
+    name: Web tools smoke (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run web smoke tests
+        run: python tests/web/test_tools_smoke.py
 
   # ---------------------------------------------------------------------------
   # Windows 原生编译（Fyne 需要 MinGW，因此用 MSYS2）

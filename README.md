@@ -7,7 +7,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Fyne](https://img.shields.io/badge/Fyne-v2.8-8F4FFF?logo=appveyor&logoColor=white)](https://fyne.io/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v1.1.0-blue?logo=github)](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases)
+[![Release](https://img.shields.io/github/v/release/XiaoYuyu520520/Copy-Paste-Mutools?label=Release&logo=github)](https://github.com/XiaoYuyu520520/Copy-Paste-Mutools/releases)
 [![Pages](https://img.shields.io/badge/Docs-GitHub%20Pages-success?logo=github)](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/)
 
 </div>
@@ -42,6 +42,7 @@
 | 📘 **完整文档站** | **[docs/index.md](docs/index.md)** · [在线版](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/) |
 | 🧪 **在线工具（网页版）** | [Base64](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/base64.html) / [二维码](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/qrcode.html) / [编解码检测](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/codec.html) / [Markdown](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/markdown.html) / [激光地图](https://xiaoyuyu520520.github.io/Copy-Paste-Mutools/tools/mapview.html) |
 | 🚀 **快速上手（5 分钟）** | [docs/快速上手.md](docs/快速上手.md) |
+| 🎯 **典型使用场景** | [docs/场景手册.md](docs/场景手册.md) |
 | 🧰 **工具箱命令手册** | [docs/工具箱.md](docs/工具箱.md) |
 | 🖥️ **桌面应用说明** | [docs/桌面应用.md](docs/桌面应用.md) |
 | 🔀 **Python → Go 迁移对照表** | [docs/迁移对照表.md](docs/迁移对照表.md) |
