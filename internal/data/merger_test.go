@@ -137,3 +137,36 @@ func TestNormalizeAndBlockOps(t *testing.T) {
 		t.Fatalf("should keep at least 1 block, got %d", len(kept.Prompts))
 	}
 }
+
+func TestMarkdownModeSkipsEmptyBlocks(t *testing.T) {
+	tc := TabConfig{
+		Mode:      MergeModeMarkdown,
+		Prompts:   []Item{{Text: "", Enabled: true}, {Text: "内容", Enabled: true}},
+		Sentences: []Item{{Text: "", Enabled: true}, {Text: "", Enabled: true}},
+	}
+	got := MergeTab(tc)
+	if got != "## 区块 2\n\n内容" {
+		t.Errorf("markdown = %q", got)
+	}
+	if strings.Contains(got, "区块 1") {
+		t.Errorf("空区块标题不应出现: %q", got)
+	}
+}
+
+func TestMarkdownModeAllEmptyReturnsEmptyString(t *testing.T) {
+	tc := TabConfig{Mode: MergeModeMarkdown}
+	tc = ResizeTab(tc, 5) // 默认 5 个空区块
+	if got := MergeTab(tc); got != "" {
+		t.Errorf("全空输入应输出空字符串, got %q", got)
+	}
+}
+
+func TestMarkdownModeKeepEmptyHeadings(t *testing.T) {
+	tc := TabConfig{Mode: MergeModeMarkdown, KeepEmptyHeadings: true}
+	tc = ResizeTab(tc, 2)
+	tc.Prompts[0].Text = "有内容"
+	got := MergeTab(tc)
+	if !strings.Contains(got, "## 区块 1") || !strings.Contains(got, "## 区块 2") {
+		t.Errorf("保留空标题模式应输出两个标题: %q", got)
+	}
+}

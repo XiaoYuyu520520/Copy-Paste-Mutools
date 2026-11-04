@@ -58,6 +58,9 @@ func (o Options) withDefaults() Options {
 
 // Event is emitted by Scanner.Scan for the consumer to forward (e.g. SSE).
 type Event struct {
+	// ScanID 标识本次扫描任务：同一 Scanner 连续发起多次扫描时，
+	// 调用方可用它丢弃旧任务残留的事件。
+	ScanID     uint64    `json:"scan_id,omitempty"`
 	Type       string    `json:"type"`
 	Scanned    int       `json:"scanned"`
 	Total      int       `json:"total"`
@@ -72,12 +75,21 @@ type Event struct {
 // Scanner orchestrates concurrent ping + tcp probing.
 type Scanner struct {
 	opts Options
+
+	// scanSeq 为扫描任务编号，每发起一次 Scan 自增。
+	scanSeq atomic.Uint64
+	// activeMu 保证同一时刻只有一次扫描在跑（避免新旧任务事件交错）。
+	activeMu sync.Mutex
+	active   bool
 }
 
 // New returns a Scanner with the supplied options (defaults applied).
 func New(opts Options) *Scanner {
 	return &Scanner{opts: opts.withDefaults()}
 }
+
+// ScanID 返回最近一次 Scan 的任务编号。
+func (s *Scanner) ScanID() uint64 { return s.scanSeq.Load() }
 
 // ExpandCIDR returns the list of usable host IPs in a CIDR (network and
 // broadcast are excluded for prefixes <= /30).
@@ -145,6 +157,23 @@ func ExpandCIDR(cidr string) ([]string, error) {
 // context before starting work, so in-flight SystemPing/ProbeTCP calls are
 // aborted via the spawned process's context.
 func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) error {
+	// 同一 Scanner 同时只允许一次扫描：否则两次扫描的事件会交错，
+	// 界面看到的设备列表会是两份数据的混合。
+	s.activeMu.Lock()
+	if s.active {
+		s.activeMu.Unlock()
+		return fmt.Errorf("已有扫描任务在进行中")
+	}
+	s.active = true
+	s.activeMu.Unlock()
+	defer func() {
+		s.activeMu.Lock()
+		s.active = false
+		s.activeMu.Unlock()
+	}()
+
+	scanID := s.scanSeq.Add(1)
+
 	hosts, err := ExpandCIDR(cidr)
 	if err != nil {
 		return err
@@ -155,6 +184,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 
 	startedAt := time.Now()
 	onEvent(Event{
+		ScanID:    scanID,
 		Type:      "start",
 		Total:     len(hosts),
 		StartedAt: startedAt,
@@ -176,12 +206,13 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 	for _, ip := range hosts {
 		select {
 		case <-ctx.Done():
-			// Cancellation: drain remaining goroutines (they will exit fast
-			// because each probe checks ctx), then emit a final cancelled
-			// event.
-			go func() { wg.Wait() }()
+			// 取消：先等所有在途探测真正结束，再发最终事件。
+			// 之前这里只是 go func(){ wg.Wait() }，Scan 会在旧任务仍在运行
+			// 时提前返回，导致新旧扫描的事件交错。
+			wg.Wait()
 			finishedAt := time.Now()
 			onEvent(Event{
+				ScanID:     scanID,
 				Type:       "cancelled",
 				Scanned:    int(atomic.LoadInt64(&scanned)),
 				Total:      len(hosts),
@@ -209,6 +240,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 
 			mu.Lock()
 			ev := Event{
+				ScanID:  scanID,
 				Type:    "host",
 				Scanned: int(n),
 				Total:   len(hosts),
@@ -228,6 +260,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 	// reaches 100% progress right away; enrichment continues below and each
 	// updated host is streamed as soon as it is ready.
 	onEvent(Event{
+		ScanID:     scanID,
 		Type:       "done",
 		Scanned:    len(hosts),
 		Total:      len(hosts),
@@ -242,7 +275,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 		for _, h := range aliveHosts {
 			select {
 			case <-ctx.Done():
-				return s.emitCancelled(len(hosts), &alive, cidr, onEvent)
+				return s.emitCancelled(scanID, len(hosts), &alive, cidr, onEvent)
 			case sem <- struct{}{}:
 			}
 
@@ -254,6 +287,7 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 				s.enrich(ctx, h)
 				mu.Lock()
 				onEvent(Event{
+					ScanID:  scanID,
 					Type:    "host",
 					Scanned: len(hosts),
 					Total:   len(hosts),
@@ -266,14 +300,15 @@ func (s *Scanner) Scan(ctx context.Context, cidr string, onEvent func(Event)) er
 		ewg.Wait()
 
 		if ctx.Err() != nil {
-			return s.emitCancelled(len(hosts), &alive, cidr, onEvent)
+			return s.emitCancelled(scanID, len(hosts), &alive, cidr, onEvent)
 		}
 	}
 	return nil
 }
 
-func (s *Scanner) emitCancelled(total int, alive *int64, cidr string, onEvent func(Event)) error {
+func (s *Scanner) emitCancelled(scanID uint64, total int, alive *int64, cidr string, onEvent func(Event)) error {
 	onEvent(Event{
+		ScanID:     scanID,
 		Type:       "cancelled",
 		Scanned:    total,
 		Total:      total,

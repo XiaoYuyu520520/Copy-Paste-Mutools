@@ -459,7 +459,10 @@ func (p *editorPage) copyResult() {
 // showTemplates 是手机端模板面板：应用/保存当前。
 func (p *editorPage) showTemplates() {
 	path := filepath.Join(filepath.Dir(p.store.path), "templates.json")
-	st := data.LoadTemplates(path)
+	st, loadErr := data.LoadTemplates(path)
+	if loadErr != nil {
+		p.status.SetText("模板读取失败：" + loadErr.Error())
+	}
 
 	sel := widget.NewSelect(nil, nil)
 	opts := make([]string, len(st.Templates))

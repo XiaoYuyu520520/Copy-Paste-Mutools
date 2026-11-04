@@ -61,3 +61,45 @@ func TestStoreAIConfigDefault(t *testing.T) {
 		t.Fatal("AIConfig 应返回副本")
 	}
 }
+
+func TestStoreSnapshotKeepsAllTabFields(t *testing.T) {
+	s := testStore()
+	s.Update(func(c *data.Config) {
+		c.Tabs = []data.TabConfig{{
+			Name:       "我的标签",
+			Mode:       data.MergeModeCustom,
+			Separator:  "---\n",
+			Prompts:    []data.Item{{Text: "P", Enabled: true}},
+			Sentences:  []data.Item{{Text: "S", Enabled: true}},
+			BlockNames: []string{"区块标题"},
+			Collapsed:  []bool{true},
+		}}
+	})
+
+	snap := s.Config()
+	tab := snap.Tabs[0]
+	if tab.Name != "我的标签" {
+		t.Errorf("Name = %q, want 我的标签", tab.Name)
+	}
+	if tab.Mode != data.MergeModeCustom {
+		t.Errorf("Mode = %q, want %q", tab.Mode, data.MergeModeCustom)
+	}
+	if tab.Separator != "---\n" {
+		t.Errorf("Separator = %q", tab.Separator)
+	}
+	if len(tab.BlockNames) != 1 || tab.BlockNames[0] != "区块标题" {
+		t.Errorf("BlockNames = %v", tab.BlockNames)
+	}
+	if len(tab.Collapsed) != 1 || !tab.Collapsed[0] {
+		t.Errorf("Collapsed = %v", tab.Collapsed)
+	}
+
+	// 快照改动不得影响内部数据
+	tab.Prompts[0].Text = "改过了"
+	tab.BlockNames[0] = "改过了"
+	tab.Collapsed[0] = false
+	got := s.Config().Tabs[0]
+	if got.Prompts[0].Text != "P" || got.BlockNames[0] != "区块标题" || !got.Collapsed[0] {
+		t.Errorf("快照被共享: %+v", got)
+	}
+}

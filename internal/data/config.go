@@ -186,20 +186,6 @@ func ExecDir() string {
 	return filepath.Dir(exe)
 }
 
-// ConfigPath 获取 config.json 路径，始终位于 exe 同级。
-func ConfigPath() string {
-	return filepath.Join(ExecDir(), "config.json")
-}
-
-// HistoryPath 获取 history.json 路径，可被 DataDir 覆盖。
-func HistoryPath(dataDir string) string {
-	dir := dataDir
-	if dir == "" {
-		dir = ExecDir()
-	}
-	return filepath.Join(dir, "history.json")
-}
-
 // padItems 把任意长度的 item 切片补齐到至少 DefaultRows，并保留超出部分。
 // 旧版固定 5 行配置仍可读；新版允许超过 5 行。
 func padItems(items []Item) []Item {
@@ -229,6 +215,8 @@ func padItems(items []Item) []Item {
 //  2. 多标签新版按原样读取。
 func LoadConfig() (Config, error) {
 	cfg := DefaultConfig()
+	// 升级兼容：把 exe 同级的旧 config.json 迁到用户配置目录。
+	migrateLegacyConfig()
 	raw, err := os.ReadFile(ConfigPath())
 	if err != nil {
 		return cfg, err
@@ -278,6 +266,9 @@ func LoadConfig() (Config, error) {
 func SaveConfig(c Config) error {
 	buf, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := EnsureStorageDir(); err != nil {
 		return err
 	}
 	return os.WriteFile(ConfigPath(), buf, 0644)

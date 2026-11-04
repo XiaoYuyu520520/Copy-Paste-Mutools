@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -40,10 +41,12 @@ type TabEditor struct {
 	sepEntry  *widget.Entry
 	sepWrap   fyne.CanvasObject
 	countLbl  *widget.Label
-	undoBtn   *widget.Button
 
-	undo    data.TabConfig
-	hasUndo bool
+	// undoStack / redoStack 实现多级撤销与重做。
+	undoStack []data.TabConfig
+	redoStack []data.TabConfig
+	undoBtn   *widget.Button
+	redoBtn   *widget.Button
 
 	// 圆角遮罩：Fyne 的 Entry 无圆角 API，用遮罩层把四角「咬」圆。
 
@@ -55,6 +58,15 @@ type TabEditor struct {
 	mergeTimer *time.Timer
 	saveTimer  *time.Timer
 	prevOutput string
+
+	// mergeSeq 是合并请求的版本号：每次 scheduleMerge 自增。
+	// 后台回调携带自己发起时的版本号，回到 UI 线程后若版本已过期
+	// 就直接丢弃，避免「旧回调覆盖新预览」。
+	mergeSeq uint64
+	// mergeMu 保护 mergeSeq 与配置快照的读取。
+	mergeMu sync.Mutex
+	// restoring 为 true 时，控件回填不再回写 Config（撤销/重做时避免互相覆盖）。
+	restoring bool
 
 	window fyne.Window
 }
@@ -100,11 +112,18 @@ func makeCodeEntry() *widget.Entry {
 }
 
 // rebuildRows 按当前 Config 重建全部区块控件。
+//
+// 纯文本修改不会走这里（Entry 自己维护内容），只有区块数量/顺序变化
+// 才需要重建控件，避免每次输入都重排整个列表。
 func (e *TabEditor) rebuildRows() {
 	if e.rowsBox == nil {
 		return
 	}
 	e.Config = data.NormalizeTab(e.Config)
+	// 回填控件时禁止 OnChanged 回写，否则会把刚恢复的快照覆盖掉。
+	prevRestoring := e.restoring
+	e.restoring = true
+	defer func() { e.restoring = prevRestoring }()
 	e.rowsBox.Objects = nil
 	e.rows = e.rows[:0]
 	for i := range e.Config.Prompts {
@@ -117,6 +136,27 @@ func (e *TabEditor) rebuildRows() {
 	}
 	e.rowsBox.Refresh()
 	e.updateCount()
+}
+
+// syncRowsText 把 Config 中的文本回填到已存在的控件（不重建控件树）。
+func (e *TabEditor) syncRowsText() {
+	prev := e.restoring
+	e.restoring = true
+	defer func() { e.restoring = prev }()
+	for i, row := range e.rows {
+		if i >= len(e.Config.Prompts) || i >= len(e.Config.Sentences) {
+			break
+		}
+		if row.prompt != nil && row.prompt.Text != e.Config.Prompts[i].Text {
+			row.prompt.SetText(e.Config.Prompts[i].Text)
+		}
+		if row.sentence != nil && row.sentence.Text != e.Config.Sentences[i].Text {
+			row.sentence.SetText(e.Config.Sentences[i].Text)
+		}
+		if row.name != nil && i < len(e.Config.BlockNames) && row.name.Text != e.Config.BlockNames[i] {
+			row.name.SetText(e.Config.BlockNames[i])
+		}
+	}
 }
 
 // View 返回整个编辑器页面。
@@ -141,9 +181,12 @@ func (e *TabEditor) View() fyne.CanvasObject {
 
 func (e *TabEditor) toolbar() fyne.CanvasObject {
 	e.nameEntry = widget.NewEntry()
-	e.nameEntry.SetText(e.Title)
 	e.nameEntry.SetPlaceHolder("标签名称")
+	e.nameEntry.SetText(e.Title)
 	e.nameEntry.OnChanged = func(s string) {
+		if e.restoring {
+			return
+		}
 		e.Title = s
 		e.Config.Name = s
 		e.scheduleSave()
@@ -182,9 +225,9 @@ func (e *TabEditor) toolbar() fyne.CanvasObject {
 	e.updateSeparatorVisibility()
 
 	addBtn := widget.NewButtonWithIcon("新增区块", theme.ContentAddIcon(), func() {
-		e.pushUndo()
 		e.Config = data.AddBlock(e.Config)
 		e.Config.BlockNames[len(e.Config.BlockNames)-1] = ""
+		e.pushUndo()
 		e.rebuildRows()
 		e.scheduleMerge()
 		e.scheduleSave()
@@ -272,16 +315,18 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 	})
 	copyBtn.Importance = widget.HighImportance
 
-	e.undoBtn = widget.NewButtonWithIcon("撤销", theme.HistoryIcon(), e.undoLast)
+	e.undoBtn = widget.NewButtonWithIcon("撤销", theme.ContentUndoIcon(), e.undoLast)
 	e.undoBtn.Disable()
+	e.redoBtn = widget.NewButtonWithIcon("重做", theme.ContentRedoIcon(), e.redoLast)
+	e.redoBtn.Disable()
 
 	clearBtn := widget.NewButtonWithIcon("清空此标签", theme.ContentClearIcon(), func() {
 		dialog.ShowConfirm("清空", "确认清空此标签的全部文本？可点「撤销」恢复。", func(ok bool) {
 			if !ok {
 				return
 			}
-			e.pushUndo()
 			e.Clear()
+			e.pushUndo()
 			e.rebuildRows()
 			e.scheduleMerge()
 			e.scheduleSave()
@@ -292,6 +337,7 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 	buttonBar := container.NewHBox(
 		clearBtn,
 		e.undoBtn,
+		e.redoBtn,
 		layout.NewSpacer(),
 		copyBtn,
 	)
@@ -351,8 +397,8 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 	}
 
 	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
-		e.pushUndo()
 		e.Config = data.MoveBlock(e.Config, i, i-1)
+		e.pushUndo()
 		e.rebuildRows()
 		e.scheduleMerge()
 		e.scheduleSave()
@@ -363,8 +409,8 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 	}
 
 	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
-		e.pushUndo()
 		e.Config = data.MoveBlock(e.Config, i, i+1)
+		e.pushUndo()
 		e.rebuildRows()
 		e.scheduleMerge()
 		e.scheduleSave()
@@ -375,8 +421,8 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 	}
 
 	copyBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
-		e.pushUndo()
 		e.Config = data.DuplicateBlock(e.Config, i)
+		e.pushUndo()
 		e.rebuildRows()
 		e.scheduleMerge()
 		e.scheduleSave()
@@ -387,8 +433,8 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		if len(e.Config.Prompts) <= 1 {
 			return
 		}
-		e.pushUndo()
 		e.Config = data.RemoveBlock(e.Config, i)
+		e.pushUndo()
 		e.rebuildRows()
 		e.scheduleMerge()
 		e.scheduleSave()
@@ -425,6 +471,9 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 	row.sentence.Wrapping = fyne.TextWrapWord
 
 	row.prompt.OnChanged = func(s string) {
+		if e.restoring {
+			return
+		}
 		if i < len(e.Config.Prompts) {
 			e.Config.Prompts[i].Text = s
 			e.scheduleMerge()
@@ -432,6 +481,9 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		}
 	}
 	row.sentence.OnChanged = func(s string) {
+		if e.restoring {
+			return
+		}
 		if i < len(e.Config.Sentences) {
 			e.Config.Sentences[i].Text = s
 			e.scheduleMerge()
@@ -439,6 +491,9 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		}
 	}
 	row.promptOn.OnChanged = func(b bool) {
+		if e.restoring {
+			return
+		}
 		if i < len(e.Config.Prompts) {
 			e.Config.Prompts[i].Enabled = b
 			e.scheduleMerge()
@@ -446,6 +501,9 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		}
 	}
 	row.sentenceOn.OnChanged = func(b bool) {
+		if e.restoring {
+			return
+		}
 		if i < len(e.Config.Sentences) {
 			e.Config.Sentences[i].Enabled = b
 			e.scheduleMerge()
@@ -469,47 +527,125 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 	return row
 }
 
-// pushUndo 保存当前快照，供撤销使用。
+// maxUndoDepth 是撤销栈的最大层数。
+const maxUndoDepth = 50
+
+// pushUndo 保存当前快照（多级撤销栈）。
+//
+// 语义：栈里保存的是「操作之后」的状态，因此调用方应在完成一次
+// 结构操作后调用（例如新增区块后）。撤销时恢复它的前一项，
+// 栈底是最初状态；重做则按相反顺序前进。
 func (e *TabEditor) pushUndo() {
-	e.undo = data.NormalizeTab(e.Config)
-	e.hasUndo = true
-	if e.undoBtn != nil {
-		e.undoBtn.Enable()
+	e.undoStack = append(e.undoStack, data.NormalizeTab(e.Config))
+	if len(e.undoStack) > maxUndoDepth {
+		e.undoStack = e.undoStack[len(e.undoStack)-maxUndoDepth:]
 	}
+	// 产生新操作后，重做栈失效。
+	e.redoStack = e.redoStack[:0]
+	e.updateHistoryButtons()
 }
 
+// undoLast 撤销一步。
 func (e *TabEditor) undoLast() {
-	if !e.hasUndo {
+	if len(e.undoStack) == 0 {
 		return
 	}
-	e.Config = data.NormalizeTab(e.undo)
+	// 栈顶是「最近一次操作之后」的状态：撤销 = 弹出栈顶并恢复它的前一项。
+	last := len(e.undoStack) - 1
+	cur := data.NormalizeTab(e.Config)
+	e.undoStack = e.undoStack[:last]
+	e.redoStack = append(e.redoStack, cur)
+	if last == 0 {
+		// 没有更早的快照：回到空标签。
+		e.Config = data.NormalizeTab(data.TabConfig{})
+	} else {
+		e.Config = data.NormalizeTab(e.undoStack[last-1])
+	}
+	e.afterHistoryChange()
+}
+
+// redoLast 重做一步。
+func (e *TabEditor) redoLast() {
+	if len(e.redoStack) == 0 {
+		return
+	}
+	// 重做：恢复被撤销掉的状态，并把当前状态放回撤销栈。
+	last := len(e.redoStack) - 1
+	restored := data.NormalizeTab(e.redoStack[last])
+	e.redoStack = e.redoStack[:last]
+	e.undoStack = append(e.undoStack, data.NormalizeTab(e.Config))
+	e.Config = restored
+	e.afterHistoryChange()
+}
+
+// afterHistoryChange 撤销/重做后同步界面状态。
+func (e *TabEditor) afterHistoryChange() {
 	e.Title = e.Config.Name
 	if e.Title == "" {
 		e.Title = "标签"
 	}
-	e.hasUndo = false
-	if e.undoBtn != nil {
-		e.undoBtn.Disable()
-	}
 	if e.nameEntry != nil {
+		e.restoring = true
 		e.nameEntry.SetText(e.Title)
+		e.restoring = false
 	}
-	e.rebuildRows()
+	// 区块数量没变时只回填文本，避免整棵控件树重建（增量刷新）。
+	if len(e.rows) == len(e.Config.Prompts) {
+		e.syncRowsText()
+	} else {
+		e.rebuildRows()
+	}
 	e.scheduleMerge()
 	e.scheduleSave()
+	e.updateHistoryButtons()
 	if e.OnRename != nil {
 		e.OnRename()
 	}
 }
 
+// updateHistoryButtons 刷新撤销/重做按钮的可用状态。
+func (e *TabEditor) updateHistoryButtons() {
+	if e.undoBtn != nil {
+		if len(e.undoStack) > 0 {
+			e.undoBtn.Enable()
+		} else {
+			e.undoBtn.Disable()
+		}
+	}
+	if e.redoBtn != nil {
+		if len(e.redoStack) > 0 {
+			e.redoBtn.Enable()
+		} else {
+			e.redoBtn.Disable()
+		}
+	}
+}
+
 // scheduleMerge 触发一次合并刷新（去抖）。
+//
+// 后台线程只读取「发起瞬间的配置快照」，不触碰正在被 UI 修改的 e.Config；
+// 回调回到 UI 线程后用版本号校验，过期结果直接丢弃。
 func (e *TabEditor) scheduleMerge() {
 	if e.mergeTimer != nil {
 		e.mergeTimer.Stop()
 	}
+
+	e.mergeMu.Lock()
+	e.mergeSeq++
+	seq := e.mergeSeq
+	snapshot := data.NormalizeTab(e.Config)
+	e.mergeMu.Unlock()
+
 	e.mergeTimer = time.AfterFunc(mergeDebounce, func() {
-		text := data.MergeTab(e.Config)
+		text := data.MergeTab(snapshot)
 		fyne.Do(func() {
+			e.mergeMu.Lock()
+			stale := e.mergeSeq != seq
+			e.mergeMu.Unlock()
+			if stale {
+				// 已经有更新的合并请求在路上，本次结果作废。
+				return
+			}
 			e.prevOutput = text
 			e.preview.SetText(text)
 			e.updateCount()
@@ -546,6 +682,9 @@ func (e *TabEditor) ForceMerge() {
 	if e.mergeTimer != nil {
 		e.mergeTimer.Stop()
 	}
+	e.mergeMu.Lock()
+	e.mergeSeq++ // 作废任何在途的旧回调
+	e.mergeMu.Unlock()
 	text := data.MergeTab(e.Config)
 	e.prevOutput = text
 	e.preview.SetText(text)

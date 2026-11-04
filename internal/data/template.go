@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,23 +30,23 @@ type TemplateStore struct {
 	Templates []Template `json:"templates"`
 }
 
-// TemplatesPath 返回模板文件路径；baseDir 为空时使用可执行文件目录。
-func TemplatesPath(baseDir string) string {
-	if baseDir == "" {
-		baseDir = ExecDir()
-	}
-	return filepath.Join(baseDir, "templates.json")
-}
-
-// LoadTemplates 读取模板文件；不存在或损坏时返回空集合。
-func LoadTemplates(path string) TemplateStore {
+// LoadTemplates 读取模板文件。
+//
+// 文件不存在时返回空集合且 err 为 nil（属于正常状态）；
+// 文件损坏或读取失败时返回可识别的错误，避免调用方「静默丢模板」。
+func LoadTemplates(path string) (TemplateStore, error) {
 	var st TemplateStore
 	buf, err := os.ReadFile(path)
 	if err != nil {
-		return st
+		if errors.Is(err, os.ErrNotExist) {
+			return st, nil
+		}
+		return st, fmt.Errorf("读取模板文件失败: %w", err)
 	}
-	_ = json.Unmarshal(buf, &st)
-	return st
+	if err := json.Unmarshal(buf, &st); err != nil {
+		return TemplateStore{}, fmt.Errorf("模板文件解析失败（%s）: %w", filepath.Base(path), err)
+	}
+	return st, nil
 }
 
 // SaveTemplates 写入模板文件。

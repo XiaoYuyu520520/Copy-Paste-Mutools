@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -13,6 +14,10 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
+
+// streamFlushInterval 是流式回复的界面刷新间隔：
+// 太快会频繁重建 Markdown 气泡，太慢则看起来卡顿。
+const streamFlushInterval = 80 * time.Millisecond
 
 // chatPage 是手机端的 AI 对话页。
 //
@@ -253,6 +258,10 @@ func (p *chatPage) toggleSend() {
 }
 
 // send 发起一次对话请求。只在 toggleSend 确认独占后由 goroutine 调用。
+//
+// 流式渲染做了两层保护：
+//  1. 后台只往自己的缓冲区追加，UI 回调读取的是「不可变快照」；
+//  2. UI 刷新按 streamFlushInterval 合并，避免每个 token 都重建一次 Markdown。
 func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history []chatMsg, gen int, sid string) {
 	defer cancel()
 
@@ -260,18 +269,60 @@ func (p *chatPage) send(ctx context.Context, cancel context.CancelFunc, history 
 	fyne.Do(func() { bubbleCh <- p.addBubble("助手", "", false) })
 	bubble := <-bubbleCh
 
-	var sb strings.Builder
+	var (
+		sb      strings.Builder
+		sbMu    sync.Mutex
+		lastRaw string // 上一次已提交给 UI 的文本
+	)
+
+	// flush 把当前缓冲区内容作为不可变快照提交给 UI。
+	flush := func(force bool) {
+		sbMu.Lock()
+		text := sb.String()
+		sbMu.Unlock()
+		if !force && text == lastRaw {
+			return
+		}
+		lastRaw = text
+		snapshot := text
+		fyne.Do(func() { p.updateBubble(bubble, "助手", snapshot, false) })
+	}
+
 	cfg := p.store.AIConfig()
+
+	// 合并刷新：后台定时把缓冲区内容刷到界面。
+	stopFlush := make(chan struct{})
+	flushDone := make(chan struct{})
+	go func() {
+		defer close(flushDone)
+		ticker := time.NewTicker(streamFlushInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopFlush:
+				return
+			case <-ticker.C:
+				flush(false)
+			}
+		}
+	}()
 
 	err := streamChat(ctx, cfg, history,
 		func(delta string) {
+			sbMu.Lock()
 			sb.WriteString(delta)
-			fyne.Do(func() { p.updateBubble(bubble, "助手", sb.String(), false) })
+			sbMu.Unlock()
 		},
 		func(full string) {},
 	)
 
+	close(stopFlush)
+	<-flushDone
+	flush(true)
+
+	sbMu.Lock()
 	finalText := sb.String()
+	sbMu.Unlock()
 	if err == nil && ctx.Err() == nil && finalText != "" {
 		p.sessions.Append(sid, chatMsg{Role: "assistant", Content: finalText})
 	}

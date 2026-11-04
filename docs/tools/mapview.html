@@ -15,6 +15,11 @@
   #topbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   #topbar .brush { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
   #topbar input[type="range"] { width: 110px; accent-color: var(--accent); }
+  .zoom-ctl { display: inline-flex; align-items: center; gap: 6px; }
+  .zoom-label { color: var(--muted); font-size: 12px; min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+  #stage { position: relative; cursor: grab; }
+  #stage.panning { cursor: grabbing; }
+  #stage canvas#ov { cursor: crosshair; }
   #meta { max-width: 100%; }
 
   /* 工作区：保持地图工具的大画布，但外框与卡片风格统一 */
@@ -95,7 +100,16 @@
         <label for="brush">橡皮</label>
         <input id="brush" type="range" min="1" max="40" value="8">
       </span>
+      <button class="ghost" id="undoBtn" title="撤销上一次擦除" disabled>撤销</button>
+      <button class="ghost" id="redoBtn" title="重做" disabled>重做</button>
       <button class="ghost" id="saveBtn" disabled>保存下载 .pgm + .yaml</button>
+      <span class="zoom-ctl">
+        <button class="ghost" id="zoomOut" title="缩小">−</button>
+        <span class="zoom-label" id="zoomLabel">100%</span>
+        <button class="ghost" id="zoomIn" title="放大">＋</button>
+        <button class="ghost" id="zoomFit" title="适应窗口">适应</button>
+        <button class="ghost" id="zoom100" title="按原图像素 1:1 显示">100%</button>
+      </span>
       <button class="ghost" id="yamlBtn" style="display:none" title="编辑当前地图的 YAML 元数据">编辑 YAML</button>
       <input id="file" type="file" multiple hidden accept=".pgm,.yaml,.yml">
       <span class="sp"></span>
@@ -159,10 +173,20 @@
 <script>
 (function(){
   function $(id){ return document.getElementById(id); }
+  // 状态分层：
+  //   state.base   —— 原始灰度像素（只读，永不修改）
+  //   state.edit   —— 编辑后的像素（擦除等操作写入这里，缩放/平移不影响它）
+  //   state.view   —— 屏幕视图（缩放比例 + 平移偏移）
+  // 这样「改变窗口大小 / 缩放 / 平移」只重绘视图，不会丢编辑内容。
   var state = {
     width: 0, height: 0, baseName: 'map', info: null, yamlName: '',
-    img: null, scale: 1, cssW: 0, cssH: 0, pgmOnly: false,
-    tool: 'none', seg: [], curSeg: null, dirty: false, loading: false
+    base: null,          // Uint8ClampedArray，原始像素
+    edit: null,          // Uint8ClampedArray，编辑后像素
+    scale: 1, cssW: 0, cssH: 0, pgmOnly: false,
+    offX: 0, offY: 0,    // 视图平移（CSS 像素，相对画布左上角）
+    fitScale: 1,         // 适应窗口的比例
+    tool: 'none', seg: [], curSeg: null, dirty: false, loading: false,
+    undoStack: [], redoStack: []
   };
   var meta = $('meta'), wrap = $('mapwrap'), emptyState = $('emptyState');
   var mapCv = $('map'), ovCv = $('ov');
@@ -261,50 +285,76 @@
     return { width: w, height: h, pixels: out };
   }
 
-  function grayToCanvas(gray){
-    var cv = document.createElement('canvas');
-    cv.width = gray.width; cv.height = gray.height;
-    var ctx = cv.getContext('2d');
-    var imgData = ctx.createImageData(gray.width, gray.height);
-    for (var i = 0; i < gray.pixels.length; i++){
-      var g = gray.pixels[i];
-      imgData.data[i*4] = g; imgData.data[i*4+1] = g; imgData.data[i*4+2] = g; imgData.data[i*4+3] = 255;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    return cv;
-  }
 
-  // ---------- 视图 ----------
-  function fit(force){
-    if (!state.img) return;
+  // ---------- 视图层：缩放 / 平移 / 渲染 ----------
+  // 画布始终保持原图分辨率（像素数据不丢），缩放与平移只改 CSS 变换，
+  // 因此调整窗口大小不会破坏擦除结果。
+  function fit(){
+    if (!state.edit) return;
     var stage = $('stage');
     var availW = Math.max(120, stage.clientWidth - 60);
     var availH = Math.max(120, stage.clientHeight - 80);
-    state.scale = Math.min(availW / state.width, availH / state.height, 3);
-    if (state.scale <= 0) state.scale = 0.2;
-    state.cssW = Math.round(state.width * state.scale);
-    state.cssH = Math.round(state.height * state.scale);
-    // 只有尺寸变化/换图时才重置画布，避免窗口缩放把擦除结果清掉
-    if (force || mapCv.width !== state.width || mapCv.height !== state.height){
+    state.fitScale = Math.min(availW / state.width, availH / state.height, 3);
+    if (state.fitScale <= 0) state.fitScale = 0.2;
+    state.scale = state.fitScale;
+    state.offX = 0; state.offY = 0;
+    applyView();
+  }
+
+  // zoomAt 以指针位置为锚点缩放，factor>1 放大。
+  function zoomAt(cssX, cssY, factor){
+    if (!state.edit) return;
+    var old = state.scale;
+    var next = Math.max(0.05, Math.min(20, old * factor));
+    if (next === old) return;
+    // 保持指针下的地图点位置不变
+    state.offX = cssX - (cssX - state.offX) * (next / old);
+    state.offY = cssY - (cssY - state.offY) * (next / old);
+    state.scale = next;
+    applyView();
+  }
+
+  function applyView(){
+    if (!state.edit) return;
+    var cssW = Math.max(1, Math.round(state.width * state.scale));
+    var cssH = Math.max(1, Math.round(state.height * state.scale));
+    state.cssW = cssW; state.cssH = cssH;
+    if (mapCv.width !== state.width || mapCv.height !== state.height){
       mapCv.width = state.width; mapCv.height = state.height;
-      redrawMap();
     }
-    ovCv.width = state.cssW; ovCv.height = state.cssH;
+    if (ovCv.width !== cssW || ovCv.height !== cssH){
+      ovCv.width = cssW; ovCv.height = cssH;
+    }
     [mapCv, ovCv].forEach(function(c){
-      c.style.width = state.cssW + 'px'; c.style.height = state.cssH + 'px';
+      c.style.width = cssW + 'px'; c.style.height = cssH + 'px';
+      c.style.transformOrigin = '0 0';
+      c.style.transform = 'translate(' + state.offX + 'px,' + state.offY + 'px)';
     });
-    wrap.style.width = state.cssW + 'px';
-    wrap.style.height = state.cssH + 'px';
+    wrap.style.width = cssW + 'px';
+    wrap.style.height = cssH + 'px';
     drawOverlay();
+    updateZoomLabel();
   }
 
-  // 地图画布始终按原图分辨率保存像素，缩放只改 CSS 尺寸
+  function updateZoomLabel(){
+    var el = $('zoomLabel');
+    if (!el) return;
+    el.textContent = Math.round(state.scale * 100) + '%';
+  }
+
+  // redrawMap 把「编辑缓冲」画到主画布（不再直接使用原始图）。
   function redrawMap(){
-    if (!state.img) return;
-    mctx.clearRect(0, 0, mapCv.width, mapCv.height);
-    mctx.drawImage(state.img, 0, 0);
+    if (!state.edit) return;
+    var imgData = mctx.createImageData(state.width, state.height);
+    var px = imgData.data;
+    for (var i = 0; i < state.width * state.height; i++){
+      var g = state.edit[i];
+      px[i*4] = g; px[i*4+1] = g; px[i*4+2] = g; px[i*4+3] = 255;
+    }
+    mctx.putImageData(imgData, 0, 0);
   }
 
+  // cssP 把图像坐标转成画布内 CSS 坐标（不含平移）。
   function cssP(p){ return [p[0] * state.scale, p[1] * state.scale]; }
 
   function niceM(target){
@@ -319,7 +369,7 @@
 
   function drawOverlay(){
     octx.clearRect(0, 0, state.cssW, state.cssH);
-    if (!state.img) return;
+    if (!state.edit) return;
     if (metric()){
       var cssPerM = state.cssW / (state.width * state.info.resolution);
       var m = niceM(120);
@@ -362,6 +412,7 @@
     tip.innerHTML = '<b>' + modeTxt + '</b>';
   }
 
+  // pick 把指针位置换算成图像像素坐标（考虑缩放与平移）。
   function pick(ev){
     var r = ovCv.getBoundingClientRect();
     var x = (ev.clientX - r.left) * state.width / r.width;
@@ -371,22 +422,44 @@
     return [x, y];
   }
 
-  var painting = false;
+  // canvasPoint 返回指针在「画布内容坐标系」中的位置（用于缩放/平移锚点）。
+  function canvasPoint(ev){
+    var r = ovCv.getBoundingClientRect();
+    return [ev.clientX - r.left, ev.clientY - r.top];
+  }
+
+  var painting = false;   // 擦除中
+  var panning = false;    // 平移中
+  var panStart = null;
+
   ovCv.addEventListener('pointerdown', function(ev){
-    if (!state.img) return;
+    if (!state.edit) return;
     ev.preventDefault();
     ovCv.setPointerCapture(ev.pointerId);
-    painting = true;
     var p = pick(ev);
     if (state.tool === 'measure'){
+      painting = true;
       if (!state.curSeg) state.curSeg = [p[0], p[1], p[0], p[1]];
       else { state.seg.push(state.curSeg); state.curSeg = null; drawOverlay(); }
     } else if (state.tool === 'erase'){
+      painting = true;
       eraseAt(p[0], p[1]);
+    } else {
+      // 普通模式：拖动平移地图
+      panning = true;
+      var c = canvasPoint(ev);
+      panStart = { x: c[0], y: c[1], offX: state.offX, offY: state.offY };
     }
   });
   ovCv.addEventListener('pointermove', function(ev){
-    if (!state.img) return;
+    if (!state.edit) return;
+    if (panning && panStart){
+      var c = canvasPoint(ev);
+      state.offX = panStart.offX + (c[0] - panStart.x);
+      state.offY = panStart.offY + (c[1] - panStart.y);
+      applyView();
+      return;
+    }
     var p = pick(ev);
     if (state.tool === 'measure' && state.curSeg){
       state.curSeg[2] = p[0]; state.curSeg[3] = p[1]; drawOverlay();
@@ -394,21 +467,67 @@
       eraseAt(p[0], p[1]);
     }
   });
-  function endDrag(){ painting = false; }
+  function endDrag(){ painting = false; panning = false; panStart = null; }
   ovCv.addEventListener('pointerup', endDrag);
   ovCv.addEventListener('pointercancel', endDrag);
   ovCv.addEventListener('dblclick', function(){
     state.seg = []; state.curSeg = null; drawOverlay(); setTool('none');
   });
 
+  // 滚轮缩放（以指针为锚点）
+  ovCv.addEventListener('wheel', function(ev){
+    if (!state.edit) return;
+    ev.preventDefault();
+    var c = canvasPoint(ev);
+    zoomAt(c[0], c[1], ev.deltaY < 0 ? 1.15 : 1/1.15);
+  }, { passive: false });
+
+  // pushUndo 记录一次编辑前的像素快照（用于撤销）。
+  function pushUndo(){
+    state.undoStack.push(state.edit.slice());
+    if (state.undoStack.length > 30) state.undoStack.shift();
+    state.redoStack.length = 0;
+  }
+
+  // 擦除：只修改编辑缓冲 state.edit，不碰原始像素 state.base。
   function eraseAt(x, y){
+    if (!state.edit) return;
+    if (!state.dirty) pushUndo();
     state.dirty = true;
     var R = Math.max(1, parseInt(brush.value, 10) || 8);
     var v = (state.info && state.info.negate !== 0) ? 0 : 255;
-    mctx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
-    mctx.beginPath();
-    mctx.arc(x, y, R, 0, Math.PI * 2);
-    mctx.fill();
+    var x0 = Math.max(0, Math.floor(x - R)), x1 = Math.min(state.width - 1, Math.ceil(x + R));
+    var y0 = Math.max(0, Math.floor(y - R)), y1 = Math.min(state.height - 1, Math.ceil(y + R));
+    for (var py = y0; py <= y1; py++){
+      for (var px = x0; px <= x1; px++){
+        var dx = px - x, dy = py - y;
+        if (dx*dx + dy*dy <= R*R) state.edit[py * state.width + px] = v;
+      }
+    }
+    redrawMap();
+    updateHistoryButtons();
+  }
+
+  function undo(){
+    if (!state.undoStack.length) { toast('没有可撤销的操作'); return; }
+    state.redoStack.push(state.edit.slice());
+    state.edit = state.undoStack.pop();
+    state.dirty = state.undoStack.length > 0;
+    redrawMap();
+    drawOverlay();
+    updateHistoryButtons();
+    toast('已撤销');
+  }
+
+  function redo(){
+    if (!state.redoStack.length) { toast('没有可重做的操作'); return; }
+    state.undoStack.push(state.edit.slice());
+    state.edit = state.redoStack.pop();
+    state.dirty = true;
+    redrawMap();
+    drawOverlay();
+    updateHistoryButtons();
+    toast('已重做');
   }
 
   // ---------- 文件加载 ----------
@@ -443,13 +562,12 @@
     try {
       var pgmBuf = new Uint8Array(await readFile(pgmFile, false));
       var gray = decodePGM(pgmBuf);
-      var srcCanvas = grayToCanvas(gray);
 
       var info = null, yamlName = '';
       if (yamlFile) {
         info = parseYAML(await readFile(yamlFile, true));
         yamlName = yamlFile.name;
-      } else if (!state.img && state.info && state.info.raw) {
+      } else if (!state.edit && state.info && state.info.raw) {
         // 先单独打开过 YAML 编辑器，再拖入 .pgm：复用已载入的 YAML
         info = state.info;
         yamlName = state.yamlName;
@@ -462,14 +580,20 @@
       state.baseName = info && info.image
         ? info.image.replace(/\.[^.]+$/, '')
         : pgmFile.name.replace(/\.[^.]+$/, '');
-      state.img = srcCanvas;
+      // 原始像素与编辑缓冲分离：缩放/平移只影响视图，编辑只写 edit。
+      state.base = gray.pixels;
+      state.edit = gray.pixels.slice();
       state.pgmOnly = !yamlFile;
       state.seg = []; state.curSeg = null; state.dirty = false;
+      state.undoStack = []; state.redoStack = [];
+      state.offX = 0; state.offY = 0;
 
       hideYamlPane();
       emptyState.style.display = 'none';
       wrap.style.display = 'block';
       [btnM, btnE, btnSave].forEach(function(b){ b.disabled = false; });
+      $('undoBtn').disabled = true;
+      $('redoBtn').disabled = true;
       btnYaml.style.display = '';
 
       var resTxt = metric()
@@ -478,7 +602,7 @@
         : '无 .yaml，仅预览 / 擦除 / 下载（距离按像素）';
       meta.textContent = state.baseName + ' · ' + state.width + 'x' + state.height + ' px · ' + resTxt;
 
-      fit(true);
+      fit();
       if (!metric()){
         btnM.disabled = false;
         btnM.title = '缺少 .yaml（resolution），测量结果按像素显示';
@@ -502,7 +626,7 @@
   // ---------- YAML 编辑器（仅有 .yaml 或点「编辑 YAML」时） ----------
   function showYamlPane(){
     $('yamlPane').classList.add('on');
-    $('yamlApply').style.display = state.img ? '' : 'none';
+    $('yamlApply').style.display = state.edit ? '' : 'none';
     // 统一为文档流的卡片布局后，滚动到编辑器可见位置（而不是整页替换）。
     var pane = $('yamlPane');
     if (pane.scrollIntoView) pane.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -517,7 +641,7 @@
       var text = await readFile(file, true);
       var name = file.name || 'map.yaml';
       state.yamlName = name;
-      if (!state.img){
+      if (!state.edit){
         state.info = parseYAML(text);
         state.baseName = (state.info.image ? state.info.image.replace(/\.[^.]+$/, '') : 'map');
       }
@@ -585,7 +709,7 @@
     if (!text.trim()) { setYamlResult('内容为空，无法应用', 'err'); return; }
     state.info = parseYAML(text);
     if (state.info.image) state.baseName = state.info.image.replace(/\.[^.]+$/, '');
-    if (state.img){
+    if (state.edit){
       hideYamlPane();
       wrap.style.display = 'block';
       var resTxt = metric()
@@ -614,7 +738,7 @@
 
   function closeYamlEditor(){
     hideYamlPane();
-    if (state.img){ wrap.style.display = 'block'; }
+    if (state.edit){ wrap.style.display = 'block'; }
     else if (!state.pgmOnly){ emptyState.style.display = 'flex'; }
   }
 
@@ -628,14 +752,15 @@
   }
 
   function saveMap(){
-    if (!state.img) return;
+    if (!state.edit) return;
     var base = state.baseName + '_edited';
     var fname = base + '.pgm';
-    var px = mctx.getImageData(0, 0, state.width, state.height).data;
+    // 直接导出编辑缓冲：缩放/平移不影响导出结果。
+    var px = state.edit;
     var head = 'P5\n# edited with PromptMerger Viewer\n' + state.width + ' ' + state.height + '\n255\n';
     var bytes = new Uint8Array(head.length + state.width * state.height);
     for (var k = 0; k < head.length; k++) bytes[k] = head.charCodeAt(k) & 0xff;
-    for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = px[i * 4];
+    for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = px[i];
     trigger(fname, new Blob([bytes], { type: 'image/x-portable-anymap' }));
     if (state.info && state.info.raw){
       var yaml = /^[ \t]*image[ \t]*:/m.test(state.info.raw)
@@ -646,10 +771,53 @@
     toast('已下载 ' + fname + (state.info && state.info.raw ? ' 与 ' + base + '.yaml' : ''));
   }
 
+  function updateHistoryButtons(){
+    var u = $('undoBtn'), r = $('redoBtn');
+    if (u) u.disabled = !state.undoStack.length;
+    if (r) r.disabled = !state.redoStack.length;
+  }
+
+  // 测试钩子：供 Playwright 冒烟测试读取编辑缓冲与导出内容。
+  // 不影响正常使用，只暴露只读快照。
+  window.__mapState = function(){
+    if (!state.edit) return null;
+    var edited = 0;
+    for (var i = 0; i < state.edit.length; i++){
+      if (state.base && state.edit[i] !== state.base[i]) edited++;
+    }
+    return {
+      width: state.width,
+      height: state.height,
+      edited: edited,
+      dirty: state.dirty,
+      scale: state.scale,
+      offX: state.offX,
+      offY: state.offY,
+      undoDepth: state.undoStack.length,
+      redoDepth: state.redoStack.length,
+      pixels: Array.prototype.slice.call(state.edit)
+    };
+  };
+  // 直接导出 PGM 字节（测试用，不触发下载）
+  window.__exportPGM = function(){
+    if (!state.edit) return null;
+    var head = 'P5\n' + state.width + ' ' + state.height + '\n255\n';
+    var bytes = new Uint8Array(head.length + state.width * state.height);
+    for (var k = 0; k < head.length; k++) bytes[k] = head.charCodeAt(k) & 0xff;
+    for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = state.edit[i];
+    return Array.prototype.slice.call(bytes);
+  };
+
   // ---------- 事件 ----------
   btnM.onclick = function(){ setTool(state.tool === 'measure' ? 'none' : 'measure'); };
   btnE.onclick = function(){ setTool(state.tool === 'erase' ? 'none' : 'erase'); };
   btnSave.onclick = saveMap;
+  $('undoBtn').onclick = undo;
+  $('redoBtn').onclick = redo;
+  $('zoomIn').onclick = function(){ zoomAt(state.cssW / 2, state.cssH / 2, 1.25); };
+  $('zoomOut').onclick = function(){ zoomAt(state.cssW / 2, state.cssH / 2, 1 / 1.25); };
+  $('zoomFit').onclick = function(){ fit(); };
+  $('zoom100').onclick = function(){ state.scale = 1; applyView(); };
   $('openBtn').onclick = function(){ fileInput.click(); };
   $('openBtn2').onclick = function(){ fileInput.click(); };
   btnYaml.onclick = openCurrentYaml;
@@ -689,7 +857,7 @@
     e.preventDefault(); dragDepth = 0; $('drop').classList.remove('on');
     loadFiles(e.dataTransfer && e.dataTransfer.files);
   });
-  window.addEventListener('resize', function(){ if (state.img && !state.loading) fit(false); });
+  window.addEventListener('resize', function(){ if (state.edit && !state.loading) applyView(); });
 })();
 </script>
 </body>

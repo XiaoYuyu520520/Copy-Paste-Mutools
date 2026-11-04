@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -361,7 +362,11 @@ func (m *MainApp) addBundle(title string, cfg data.TabConfig) {
 		m.setStatus(fmt.Sprintf("合并 %d 行 · %s", editor.ActiveCount(), nowStr()))
 	}
 	editor.OnDirty = func() { m.scheduleSaveConfig() }
-	editor.OnDirtyNow = func() { m.saveConfigNow() }
+	editor.OnDirtyNow = func() {
+		if err := m.saveConfigNow(); err != nil {
+			m.setStatus("配置保存失败：" + err.Error())
+		}
+	}
 	editor.OnRename = func() { m.tabBar.SetBundles(m.bundles) }
 
 	bundle := &tabBundle{editor: editor}
@@ -505,7 +510,10 @@ func (m *MainApp) openConfigMenu() {
 	menu := fyne.NewMenu("",
 		fyne.NewMenuItem(switchThemeLabel(m.cfg.ThemeMode == "dark"), m.toggleTheme),
 		fyne.NewMenuItem("立即保存配置", func() {
-			m.saveConfigNow()
+			if err := m.saveConfigNow(); err != nil {
+				m.setStatus("配置保存失败：" + err.Error())
+				return
+			}
 			m.setStatus("配置已保存")
 		}),
 	)
@@ -605,18 +613,26 @@ func (m *MainApp) scheduleSaveConfig() {
 	m.timerMu.Unlock()
 }
 
+// doSaveConfig 自动保存的落点：把结果统一反映到状态栏。
 func (m *MainApp) doSaveConfig() {
-	m.saveConfigNow()
+	if err := m.saveConfigNow(); err != nil {
+		m.setStatus("配置保存失败：" + err.Error())
+		return
+	}
 	m.setStatus(fmt.Sprintf("配置已保存（%d 标签）", len(m.bundles)))
 }
 
-func (m *MainApp) saveConfigNow() {
+// saveConfigNow 把内存中的编辑器状态写回配置文件，返回保存错误。
+//
+// 之前这里直接丢弃了 data.SaveConfig 的错误，导致磁盘写入失败时界面
+// 仍然提示「已保存」。现在所有调用方都能拿到明确结果。
+func (m *MainApp) saveConfigNow() error {
 	for i, b := range m.bundles {
 		if i < len(m.cfg.Tabs) {
 			m.cfg.Tabs[i] = b.editor.Config
 		}
 	}
-	_ = data.SaveConfig(*m.cfg)
+	return data.SaveConfig(*m.cfg)
 }
 
 func (m *MainApp) flushAll() {
@@ -633,7 +649,10 @@ func (m *MainApp) flushAll() {
 	for _, b := range m.bundles {
 		b.editor.FlushSave()
 	}
-	m.saveConfigNow()
+	if err := m.saveConfigNow(); err != nil {
+		// 退出时无法弹窗，只记录到 stderr（窗口即将关闭，用户可能看不到）。
+		fmt.Fprintf(os.Stderr, "[config] 保存失败: %v\n", err)
+	}
 	if m.lanTool != nil {
 		m.lanTool.Stop()
 	}

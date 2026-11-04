@@ -2,6 +2,8 @@ package data
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -86,5 +88,36 @@ func TestTemplateJSONRoundTrip(t *testing.T) {
 	got, err = ImportTemplatesJSON(bare)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("bare import = %+v, %v", got, err)
+	}
+}
+
+func TestLoadTemplatesReturnsError(t *testing.T) {
+	dir := t.TempDir()
+
+	// 文件不存在：属于正常情况，不算错误
+	if _, err := LoadTemplates(filepath.Join(dir, "missing.json")); err != nil {
+		t.Fatalf("missing file should not error: %v", err)
+	}
+
+	// 文件损坏：必须返回可识别的错误
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTemplates(bad); err == nil {
+		t.Fatal("损坏的模板文件应返回错误")
+	}
+
+	// 正常文件
+	ok := filepath.Join(dir, "ok.json")
+	if err := os.WriteFile(ok, []byte(`{"templates":[{"id":"x","name":"T"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadTemplates(ok)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(st.Templates) != 1 || st.Templates[0].Name != "T" {
+		t.Fatalf("templates = %+v", st.Templates)
 	}
 }

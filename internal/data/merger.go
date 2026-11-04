@@ -42,6 +42,10 @@ type TabConfig struct {
 
 	Mode      string `json:"merge_mode,omitempty"` // 合并模式，空 = natural
 	Separator string `json:"separator,omitempty"`  // custom 模式的分隔符
+
+	// KeepEmptyHeadings 为 true 时，Markdown 模式保留空区块的标题
+	//（适合需要固定模板结构的场景）；默认跳过没有内容的区块。
+	KeepEmptyHeadings bool `json:"keep_empty_headings,omitempty"`
 }
 
 // NormalizeTab 对齐两列长度并补齐元数据，保持旧配置可读。
@@ -67,6 +71,8 @@ func NormalizeTab(t TabConfig) TabConfig {
 			sentences[i] = Item{Enabled: true}
 		}
 	}
+	// Prompts / Sentences 已经是新切片，Item 为值类型，
+	// 因此返回值与入参不共享底层数组（可安全用于撤销快照）。
 	names := make([]string, n)
 	copy(names, t.BlockNames)
 	collapsed := make([]bool, n)
@@ -235,6 +241,10 @@ func MergeTabMode(t TabConfig, mode string) string {
 				blocks = append(blocks, strings.Join(parts, "\n"))
 			}
 		case MergeModeMarkdown:
+			if !pHas && !sHas && !t.KeepEmptyHeadings {
+				// 空区块默认跳过，避免生成一串没有内容的标题。
+				continue
+			}
 			title := blockTitle(t, i)
 			var b strings.Builder
 			b.WriteString("## ")

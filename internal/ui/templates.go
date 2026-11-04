@@ -16,7 +16,10 @@ import (
 // showTemplates 打开模板管理对话框：应用/保存/删除/导入/导出。
 func (e *TabEditor) showTemplates() {
 	path := data.TemplatesPath("")
-	st := data.LoadTemplates(path)
+	st, loadErr := data.LoadTemplates(path)
+	if loadErr != nil {
+		dialog.ShowError(loadErr, e.window)
+	}
 
 	var filtered []data.Template
 	selected := -1

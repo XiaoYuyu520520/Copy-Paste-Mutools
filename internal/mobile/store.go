@@ -77,19 +77,30 @@ func (s *store) AIConfig() data.AIConfig {
 	return *s.cfg.AI
 }
 
-// cloneConfig 深拷贝配置，隔离切片与 AI 指针。
+// cloneConfig 深拷贝配置，隔离切片与指针字段。
+//
+// 关键点：先整体复制 TabConfig（保留 Name / Mode / Separator /
+// BlockNames / Collapsed 等所有标量字段），再深拷贝其中的切片，
+// 避免手写字段列表时漏掉新加的字段。
 func cloneConfig(c data.Config) data.Config {
 	out := c
+
 	out.Tabs = make([]data.TabConfig, len(c.Tabs))
 	for i, t := range c.Tabs {
-		out.Tabs[i] = data.TabConfig{
-			Prompts:   append([]data.Item(nil), t.Prompts...),
-			Sentences: append([]data.Item(nil), t.Sentences...),
-		}
+		tab := t // 先整体复制，保留 Name/Mode/Separator 等字段
+		tab.Prompts = append([]data.Item(nil), t.Prompts...)
+		tab.Sentences = append([]data.Item(nil), t.Sentences...)
+		tab.BlockNames = append([]string(nil), t.BlockNames...)
+		tab.Collapsed = append([]bool(nil), t.Collapsed...)
+		out.Tabs[i] = tab
 	}
+
 	if c.AI != nil {
 		ai := *c.AI
 		out.AI = &ai
+	}
+	if c.Providers != nil {
+		out.Providers = append([]data.AIProvider(nil), c.Providers...)
 	}
 	return out
 }

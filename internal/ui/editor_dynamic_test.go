@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2/test"
 
@@ -74,12 +75,14 @@ func TestEditorUndoAfterClear(t *testing.T) {
 	ed := newTestEditor(t, 2)
 	defer stopEditorTimers(ed)
 	ed.Config.Prompts[0].Text = "KEEP"
-	ed.pushUndo()
+	ed.pushUndo() // 快照：KEEP
 	ed.Clear()
+	ed.pushUndo() // 快照：清空之后（空）
 	ed.rebuildRows()
 	if ed.Config.Prompts[0].Text != "" {
 		t.Fatal("clear failed")
 	}
+	// 撤销恢复到「清空之前」的状态
 	ed.undoLast()
 	if ed.Config.Prompts[0].Text != "KEEP" {
 		t.Fatalf("undo failed: %q", ed.Config.Prompts[0].Text)
@@ -98,5 +101,98 @@ func TestEditorMergeModesInUI(t *testing.T) {
 	ed.Config.Separator = "|"
 	if got := data.MergeTab(ed.Config); got != "P\nS|P\nS" {
 		t.Fatalf("custom merge = %q", got)
+	}
+}
+
+// 快速连续修改后，只有最新一次合并结果能落到预览上（旧回调必须被丢弃）。
+func TestEditorStaleMergeDoesNotOverridePreview(t *testing.T) {
+	ed := newTestEditor(t, 2)
+	defer stopEditorTimers(ed)
+
+	ed.Config = data.ResizeTab(ed.Config, 1)
+	ed.Config.Mode = data.MergeModeRaw
+	ed.Config.Sentences[0].Text = ""
+	ed.Config.Prompts[0].Text = "旧内容"
+	ed.scheduleMerge()
+
+	// 在去抖窗口内立刻改成新内容并再次调度。
+	ed.Config.Prompts[0].Text = "新内容"
+	ed.scheduleMerge()
+
+	time.Sleep(3 * mergeDebounce)
+	if got := data.MergeTab(ed.Config); got != "新内容" {
+		t.Fatalf("合并结果 = %q, want 新内容", got)
+	}
+	// 版本号必须已推进到最新一次请求。
+	ed.mergeMu.Lock()
+	seq := ed.mergeSeq
+	ed.mergeMu.Unlock()
+	if seq < 2 {
+		t.Fatalf("mergeSeq = %d, want >= 2", seq)
+	}
+}
+
+// 多级撤销/重做：连续多次结构操作后可以逐级回退与前进。
+func TestEditorMultiLevelUndoRedo(t *testing.T) {
+	ed := newTestEditor(t, 2)
+	defer stopEditorTimers(ed)
+
+	// 语义：pushUndo 记录「操作前」的状态，因此先记录再修改。
+	ed.pushUndo() // 快照：P（初始）
+	ed.Config.Prompts[0].Text = "v1"
+	ed.pushUndo() // 快照：v1
+	ed.Config.Prompts[0].Text = "v2"
+	ed.pushUndo() // 快照：v2
+
+	// 栈顶是「最后一次修改之前」的状态：
+	// 当前值 v2 → 撤销回到 v1 → 再撤销回到 P。
+	ed.undoLast()
+	if ed.Config.Prompts[0].Text != "v1" {
+		t.Fatalf("undo 1 -> %q, want v1", ed.Config.Prompts[0].Text)
+	}
+	ed.undoLast()
+	if ed.Config.Prompts[0].Text != "P" {
+		t.Fatalf("undo 2 -> %q, want P", ed.Config.Prompts[0].Text)
+	}
+	// 栈底保留最初状态作为基线，撤销到最底时栈里只剩它
+	if len(ed.undoStack) != 1 {
+		t.Fatalf("undo stack should keep the baseline, got %d", len(ed.undoStack))
+	}
+
+	// 重做按相反顺序恢复。
+	ed.redoLast()
+	if ed.Config.Prompts[0].Text != "v1" {
+		t.Fatalf("redo 1 -> %q, want v1", ed.Config.Prompts[0].Text)
+	}
+	ed.redoLast()
+	if ed.Config.Prompts[0].Text != "v2" {
+		t.Fatalf("redo 2 -> %q, want v2", ed.Config.Prompts[0].Text)
+	}
+}
+
+// 撤销栈有上限，避免长时间编辑无限增长。
+func TestEditorUndoStackBounded(t *testing.T) {
+	ed := newTestEditor(t, 1)
+	defer stopEditorTimers(ed)
+	for i := 0; i < maxUndoDepth+20; i++ {
+		ed.pushUndo()
+	}
+	if len(ed.undoStack) > maxUndoDepth {
+		t.Fatalf("undo stack = %d, want <= %d", len(ed.undoStack), maxUndoDepth)
+	}
+}
+
+// 新操作会清空重做栈。
+func TestEditorNewOperationClearsRedo(t *testing.T) {
+	ed := newTestEditor(t, 1)
+	defer stopEditorTimers(ed)
+	ed.pushUndo()
+	ed.undoLast()
+	if len(ed.redoStack) == 0 {
+		t.Fatal("redo stack should have 1 item")
+	}
+	ed.pushUndo()
+	if len(ed.redoStack) != 0 {
+		t.Fatalf("redo stack should be cleared, got %d", len(ed.redoStack))
 	}
 }
