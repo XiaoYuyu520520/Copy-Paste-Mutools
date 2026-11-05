@@ -266,7 +266,13 @@
       if (sep === 32 || sep === 9 || sep === 13 || sep === 10) pos++;
     }
     var out = new Uint8ClampedArray(w * h);
-    var scale = function(v){ return maxv === 255 ? v : Math.min(255, Math.floor(v * 255 / maxv)); };
+    // 归一化：按声明的 maxv 换算到 0..255，与 Go 版 internal/render/pgm.go 一致。
+    var scale = function(v){
+      if (v <= 0) return 0;
+      if (v >= maxv) return 255;
+      if (maxv === 255) return v;
+      return Math.min(255, Math.floor(v * 255 / maxv));
+    };
     if (magic === 'P2'){
       for (var k = 0; k < w * h; k++){
         r = tokenize(buf, pos); pos = r.next;
@@ -274,7 +280,15 @@
       }
     } else if (maxv <= 255){
       if (buf.length - pos < w * h) throw new Error('P5 数据不足');
-      out.set(buf.subarray(pos, pos + w * h));
+      // 必须按声明的 maxv 归一化到 0..255：maxv 不是 255 时直接拷贝会导致
+      // 本应接近白色的像素显示得很暗（与 Go 版 internal/render/pgm.go 保持一致）。
+      if (maxv === 255){
+        out.set(buf.subarray(pos, pos + w * h));
+      } else {
+        for (var q = 0; q < w * h; q++){
+          out[q] = scale(buf[pos + q]);
+        }
+      }
     } else {
       for (var j = 0; j < w * h; j++){
         if (pos + 2 > buf.length) throw new Error('P5(16bit) 数据不足');
@@ -806,6 +820,16 @@
     for (var k = 0; k < head.length; k++) bytes[k] = head.charCodeAt(k) & 0xff;
     for (var i = 0; i < state.width * state.height; i++) bytes[head.length + i] = state.edit[i];
     return Array.prototype.slice.call(bytes);
+  };
+  // 解码任意 PGM 字节（测试用）：验证不同 maxval 的灰度归一化。
+  window.__decodePGM = function(bytes){
+    var buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    var img = decodePGM(buf);
+    return {
+      width: img.width,
+      height: img.height,
+      pixels: Array.prototype.slice.call(img.pixels)
+    };
   };
 
   // ---------- 事件 ----------

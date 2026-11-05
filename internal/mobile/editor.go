@@ -124,6 +124,19 @@ func newEditorPage(s *store) *editorPage {
 	p.status = widget.NewLabel("")
 	p.count = widget.NewLabel("")
 
+	// 配置保存状态反馈：去抖保存完成后更新「未保存 / 正在保存 / 已保存 / 保存失败」。
+	// 回调可能在定时器 goroutine 触发，需切回 UI 线程。
+	s.SetSaveResultHandler(func(err error) {
+		fyne.Do(func() {
+			state, detail := s.SaveStatus()
+			if err != nil {
+				p.status.SetText("保存失败：" + detail)
+				return
+			}
+			p.status.SetText(state.Label())
+		})
+	})
+
 	copyBtn := widget.NewButtonWithIcon("复制结果", theme.ContentCopyIcon(), p.copyResult)
 	clearBtn := widget.NewButtonWithIcon("清空本站", theme.DeleteIcon(), p.clearTab)
 

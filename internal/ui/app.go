@@ -296,8 +296,10 @@ func (m *MainApp) chatSettings() chat.Settings {
 	return m.aiCfg
 }
 
-// onSaveAI 从 AI 设置页保存到内存并落盘 config.json。
-func (m *MainApp) onSaveAI(s chat.Settings) {
+// onSaveAI 从 AI 设置页保存单个服务商到内存并落盘 config.json。
+//
+// 返回 error 而不是只写状态栏：设置面板需要据此判断是否真的写盘成功。
+func (m *MainApp) onSaveAI(s chat.Settings) error {
 	m.aiMu.Lock()
 	m.aiCfg = s
 	if m.cfg.AI == nil {
@@ -308,14 +310,13 @@ func (m *MainApp) onSaveAI(s chat.Settings) {
 	m.cfg.AI.Model = s.Model
 	m.cfg.AI.System = s.System
 	m.aiMu.Unlock()
-	if err := data.SaveConfig(*m.cfg); err != nil {
-		m.setStatus("AI 设置保存失败：" + err.Error())
-		return
-	}
+	return data.SaveConfig(*m.cfg)
 }
 
 // onSaveProviders 保存多服务商列表，并同步当前生效配置。
-func (m *MainApp) onSaveProviders(list []data.AIProvider, active int) {
+//
+// 返回 error：写盘失败时设置面板会显示失败原因而不是「已保存」。
+func (m *MainApp) onSaveProviders(list []data.AIProvider, active int) error {
 	m.cfg.Providers = append([]data.AIProvider(nil), list...)
 	m.cfg.ActiveProvider = active
 	m.cfg.EnsureProviders()
@@ -330,10 +331,10 @@ func (m *MainApp) onSaveProviders(list []data.AIProvider, active int) {
 		m.aiMu.Unlock()
 	}
 	if err := data.SaveConfig(*m.cfg); err != nil {
-		m.setStatus("AI 服务商保存失败：" + err.Error())
-		return
+		return err
 	}
 	m.setStatus(fmt.Sprintf("已保存 %d 个服务商", len(m.cfg.Providers)))
+	return nil
 }
 
 // openAiChat 打开浏览器版 AI 聊天；未配置时提示先去「AI 设置」页。
@@ -510,11 +511,7 @@ func (m *MainApp) openConfigMenu() {
 	menu := fyne.NewMenu("",
 		fyne.NewMenuItem(switchThemeLabel(m.cfg.ThemeMode == "dark"), m.toggleTheme),
 		fyne.NewMenuItem("立即保存配置", func() {
-			if err := m.saveConfigNow(); err != nil {
-				m.setStatus("配置保存失败：" + err.Error())
-				return
-			}
-			m.setStatus("配置已保存")
+			m.saveWithFeedback()
 		}),
 	)
 
@@ -615,6 +612,19 @@ func (m *MainApp) scheduleSaveConfig() {
 
 // doSaveConfig 自动保存的落点：把结果统一反映到状态栏。
 func (m *MainApp) doSaveConfig() {
+	if err := m.saveConfigNow(); err != nil {
+		m.setStatus("配置保存失败：" + err.Error())
+		return
+	}
+	m.setStatus(fmt.Sprintf("配置已保存（%d 标签）", len(m.bundles)))
+}
+
+// saveWithFeedback 是桌面端所有「立即保存」入口的唯一实现：
+// 快捷键 Ctrl+S、配置菜单「立即保存配置」等都走这里。
+//
+// 关键点：只有真正写盘成功才提示「已保存」，失败时把错误原因显示出来，
+// 避免出现「保存失败但界面显示已保存」的假成功。
+func (m *MainApp) saveWithFeedback() {
 	if err := m.saveConfigNow(); err != nil {
 		m.setStatus("配置保存失败：" + err.Error())
 		return

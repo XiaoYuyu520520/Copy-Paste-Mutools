@@ -118,7 +118,7 @@ func migrateLegacyConfig() bool {
 	if err := EnsureStorageDir(); err != nil {
 		return false
 	}
-	if err := os.WriteFile(target, raw, 0o644); err != nil {
+	if err := SaveFileAtomic(target, raw); err != nil {
 		return false
 	}
 	return true

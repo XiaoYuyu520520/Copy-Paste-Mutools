@@ -1,9 +1,14 @@
-"""网页版工具的 Playwright 冒烟测试。
+"""网页版工具的 Playwright 冒烟与功能测试。
 
 覆盖：
   - 页面能打开、主要按钮存在且可点击、无 JS 运行时错误
+  - Base64：UTF-8 往返转换、URL-safe、非法输入的错误提示
+  - 二维码：文本生成 + PNG/SVG 下载
+  - Markdown：导入渲染、代码高亮、左右对照、主题切换
+  - 编解码检测：异常 API 情况下的降级不崩
   - 2D 激光地图：擦除障碍物后，连续改变窗口尺寸 / 缩放 / 平移，
     导出的 PGM 必须保留编辑内容（不退回原图）
+  - PGM 灰度归一化：P2/P5、8/16 位、不同 maxval 必须与 Go 版一致
 
 运行：
     python -m pytest tests/web/test_tools_smoke.py -v
@@ -24,6 +29,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "docs" / "tools"
+SAMPLES = ROOT / "tests" / "data"
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -58,13 +64,13 @@ def _page_url(name: str) -> str:
     return "file:///" + str(TOOLS / name).replace(os.sep, "/")
 
 
-def _drop_pgm(page, w: int = 40, h: int = 30) -> None:
+def _drop_pgm(page, w: int = 40, h: int = 30, maxv: int = 255) -> None:
     """构造一个 PGM 并以「拖放」方式送入页面（绕过 file input 的限制）。"""
     px = bytearray()
     for y in range(h):
         for x in range(w):
-            px.append(0 if (x in (5, 6, 7) and y in (5, 6)) else 255)
-    head = f"P5\n{w} {h}\n255\n"
+            px.append(0 if (x in (5, 6, 7) and y in (5, 6)) else maxv)
+    head = f"P5\n{w} {h}\n{maxv}\n"
     data = head.encode() + bytes(px)
     page.evaluate(
         """async (arg) => {
@@ -98,8 +104,6 @@ def test_map_edit_survives_resize_zoom_pan():
         page.click("#eraseBtn")
         box = page.locator("#ov").bounding_box()
         assert box, "画布不可见"
-        # 障碍物位于图像 (6,5)；先适应窗口，再换算到屏幕坐标
-        page.evaluate("() => { const b=document.getElementById('ov').getBoundingClientRect(); return null; }")
         state = page.evaluate("() => window.__mapState()")
         scale = state["scale"]
         # 图像坐标 → 画布 CSS 坐标 → 页面坐标
@@ -149,6 +153,265 @@ def test_map_edit_survives_resize_zoom_pan():
         browser.close()
 
 
+# ---------- PGM 灰度归一化（回归网页端未按 maxv 换算导致整图偏暗的缺陷） ----------
+
+# 样本文件 → 期望的 8 位灰度像素（与 Go 版 internal/render/pgm_test.go 一致）
+PGM_CASES = [
+    ("p5_8bit_255.pgm", [0, 64, 128, 255]),
+    ("p5_8bit_15.pgm", [0, 136, 255]),
+    ("p5_8bit_3.pgm", [0, 85, 170, 255]),
+    ("p2_ascii_15.pgm", [0, 136, 255]),
+    ("p2_ascii_255.pgm", [0, 85, 170, 255]),
+    ("p5_16bit_65535.pgm", [0, 255]),
+    ("p5_16bit_1000.pgm", [0, 255]),
+]
+
+
+def test_mapview_pgm_gray_normalization():
+    """网页端解析 PGM 必须按声明的 maxval 归一化到 0..255。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("mapview.html"))
+        page.wait_for_timeout(300)
+
+        for name, want in PGM_CASES:
+            path = SAMPLES / name
+            if not path.exists():
+                raise AssertionError(f"缺少共享测试样本: {path}")
+            raw = path.read_bytes()
+            b64 = base64.b64encode(raw).decode()
+            got = page.evaluate(
+                """(b64) => {
+                    const bin = atob(b64);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    return window.__decodePGM(bytes);
+                }""",
+                b64,
+            )
+            assert got is not None, f"{name} 解码失败"
+            assert got["pixels"] == want, f"{name} 灰度归一化错误: {got['pixels']} != {want}"
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+def test_mapview_rejects_bad_pgm():
+    """非法 PGM 必须报错而不是静默产出错误图像。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page()
+        page.goto(_page_url("mapview.html"))
+        page.wait_for_timeout(200)
+
+        for name, blob in [
+            ("未知魔数", b"P3\n1 1\n255\n0\n"),
+            ("尺寸为 0", b"P5\n0 0\n255\n"),
+            ("数据不足", b"P5\n4 4\n255\nshort"),
+        ]:
+            b64 = base64.b64encode(blob).decode()
+            failed = page.evaluate(
+                """(b64) => {
+                    const bin = atob(b64);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    try { window.__decodePGM(bytes); return false; } catch (e) { return true; }
+                }""",
+                b64,
+            )
+            assert failed, f"{name} 应抛出错误"
+
+        browser.close()
+
+
+# ---------- Base64 ----------
+
+def test_base64_roundtrip_and_errors():
+    """Base64 文本往返转换 + URL-safe + 非法输入报错。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("base64.html"))
+        page.wait_for_timeout(200)
+
+        text = "你好，世界！Hello 🌍 123"
+        page.fill("#input", text)
+        page.click("#btnEncode")
+        encoded = page.input_value("#output")
+        assert encoded, "编码结果为空"
+        assert "5L2g5aW9" in encoded, f"中文编码结果不对: {encoded}"
+
+        # 往返：把编码结果放回输入框解码
+        page.fill("#input", encoded)
+        page.click("#btnDecode")
+        assert page.input_value("#output") == text, "往返转换后内容不一致"
+
+        # URL-safe：不应出现 + / 与 =
+        page.check("#optUrlSafe")
+        page.fill("#input", "???>>>~~~")
+        page.click("#btnEncode")
+        urlsafe = page.input_value("#output")
+        assert "+" not in urlsafe and "/" not in urlsafe and "=" not in urlsafe, f"URL-safe 失败: {urlsafe}"
+        page.uncheck("#optUrlSafe")
+
+        # 非法字符必须给出错误提示（而不是抛 JS 异常）
+        page.fill("#input", "这不是 base64!!!")
+        page.click("#btnDecode")
+        status = page.text_content("#status") or ""
+        assert "解码失败" in status, f"非法输入未报错: {status}"
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+# ---------- 二维码 ----------
+
+def test_qrcode_generate_and_download():
+    """二维码：文本生成 + PNG / SVG 下载。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("qrcode.html"))
+        page.wait_for_timeout(200)
+
+        page.fill("#content", "https://github.com/XiaoYuyu520520/Copy-Paste-Mutools")
+        page.click("#btnGen")
+        page.wait_for_timeout(500)
+
+        # 预览区应出现内联 SVG
+        assert page.locator("#preview svg").count() >= 1, "二维码未生成预览"
+
+        # 下载 PNG
+        with page.expect_download() as dl:
+            page.click("#btnPng")
+        png = dl.value
+        assert png.suggested_filename.endswith(".png"), png.suggested_filename
+        png_path = pathlib.Path(png.path())
+        assert png_path.stat().st_size > 0, "PNG 内容为空"
+
+        # 下载 SVG
+        with page.expect_download() as dl2:
+            page.click("#btnSvg")
+        svg = dl2.value
+        assert svg.suggested_filename.endswith(".svg"), svg.suggested_filename
+        svg_path = pathlib.Path(svg.path())
+        assert svg_path.stat().st_size > 0, "SVG 内容为空"
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+# ---------- Markdown ----------
+
+def test_markdown_render_split_and_theme():
+    """Markdown：输入即渲染 + 左右对照 + 主题切换。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("markdown.html"))
+        page.wait_for_timeout(300)
+
+        page.fill("#src", "# 标题\n\n正文段落 **加粗**\n\n```go\nfunc main() {}\n```\n")
+        page.wait_for_timeout(500)
+
+        out = page.text_content("#out") or ""
+        assert "标题" in out, f"标题未渲染: {out[:200]}"
+        assert "加粗" in out, "正文未渲染"
+        assert "func main" in out, "代码块未渲染"
+
+        # 左右对照
+        page.click("#btnSplit")
+        page.wait_for_timeout(300)
+        assert page.locator("#edit").is_visible(), "左右对照未显示源码区"
+
+        # 主题切换（不应抛错）
+        page.click("#btnTheme")
+        page.wait_for_timeout(200)
+        page.click("#btnTheme")
+        page.wait_for_timeout(200)
+
+        # 清空
+        page.click("#btnClear")
+        page.wait_for_timeout(200)
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+def test_markdown_open_file():
+    """Markdown：拖入 .md 文件应渲染并显示文件名。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("markdown.html"))
+        page.wait_for_timeout(300)
+
+        content = "# 来自文件\n\n这是拖入的 Markdown 内容。\n"
+        b64 = base64.b64encode(content.encode()).decode()
+        page.evaluate(
+            """(arg) => {
+                const bin = atob(arg.b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const file = new File([bytes], arg.name, { type: 'text/markdown' });
+                const ev = new Event('drop', { bubbles: true, cancelable: true });
+                ev.dataTransfer = { files: [file] };
+                window.dispatchEvent(ev);
+            }""",
+            {"b64": b64, "name": "sample.md"},
+        )
+        page.wait_for_timeout(600)
+
+        out = page.text_content("#out") or ""
+        assert "来自文件" in out, f"拖入文件未渲染: {out[:200]}"
+        info = page.text_content("#info") or ""
+        assert "sample.md" in info, f"未显示文件名: {info}"
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+# ---------- 编解码检测 ----------
+
+def test_codec_detect_runs_and_reports():
+    """编解码检测页应完成检测并给出报告，异常 API 时不崩。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("codec.html"))
+        page.wait_for_timeout(1200)
+
+        status = (page.text_content("#status") or "").strip()
+        assert status, "检测状态为空"
+        assert "失败" not in status and "错误" not in status, f"检测失败: {status}"
+
+        # 环境表格应已填充
+        assert page.locator("#videoBody tr").count() > 0, "视频表格为空"
+        assert page.locator("#audioBody tr").count() > 0, "音频表格为空"
+
+        # 重新检测不应抛错
+        page.click("#btnRun")
+        page.wait_for_timeout(800)
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+# ---------- 通用导航 ----------
+
 def test_tool_pages_load_with_common_nav():
     """所有工具页都应使用统一导航（nav.top + 品牌 + 工具总览链接）。"""
     pages = ["index.html", "base64.html", "qrcode.html", "codec.html", "markdown.html", "mapview.html"]
@@ -170,9 +433,22 @@ def test_tool_pages_load_with_common_nav():
         browser.close()
 
 
+ALL_TESTS = [
+    test_map_edit_survives_resize_zoom_pan,
+    test_mapview_pgm_gray_normalization,
+    test_mapview_rejects_bad_pgm,
+    test_base64_roundtrip_and_errors,
+    test_qrcode_generate_and_download,
+    test_markdown_render_split_and_theme,
+    test_markdown_open_file,
+    test_codec_detect_runs_and_reports,
+    test_tool_pages_load_with_common_nav,
+]
+
+
 if __name__ == "__main__":
     failed = 0
-    for fn in (test_map_edit_survives_resize_zoom_pan, test_tool_pages_load_with_common_nav):
+    for fn in ALL_TESTS:
         try:
             fn()
             print(f"PASS {fn.__name__}")

@@ -11,7 +11,6 @@
 package mobile
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,17 +30,18 @@ type store struct {
 	path string
 	cfg  data.Config
 
-	saveTimer *time.Timer
+	saveTimer    *time.Timer
+	onSaveResult func(error)
+	saveState    SaveState
+	saveErr      string
 }
 
-// newStore 载入配置；文件不存在或损坏时回落到默认配置。
+// newStore 载入配置；文件不存在或损坏时回退到 .bak 备份，再不行用默认配置。
 func newStore(a fyne.App) *store {
 	s := &store{path: configPath(a), cfg: data.DefaultConfig()}
-	if b, err := os.ReadFile(s.path); err == nil {
-		var cfg data.Config
-		if err := json.Unmarshal(b, &cfg); err == nil {
-			s.cfg = normalize(cfg)
-		}
+	var cfg data.Config
+	if _, err := data.LoadJSONWithBackup(s.path, &cfg); err == nil {
+		s.cfg = normalize(cfg)
 	}
 	s.cfg.EnsureProviders()
 	return s
@@ -105,30 +105,101 @@ func cloneConfig(c data.Config) data.Config {
 	return out
 }
 
-// Save 立即落盘。
+// SaveState 表示配置的落盘状态，用于给用户明确反馈。
+type SaveState int
+
+const (
+	// SaveStateIdle 表示当前没有待保存的改动。
+	SaveStateIdle SaveState = iota
+	// SaveStatePending 表示有改动尚未写盘（等待去抖定时器）。
+	SaveStatePending
+	// SaveStateSaving 表示正在写盘。
+	SaveStateSaving
+	// SaveStateSaved 表示最近一次写盘成功。
+	SaveStateSaved
+	// SaveStateFailed 表示写盘失败（details 为原因）。
+	SaveStateFailed
+)
+
+// Label 返回状态的中文描述。
+func (s SaveState) Label() string {
+	switch s {
+	case SaveStatePending:
+		return "有未保存的改动"
+	case SaveStateSaving:
+		return "正在保存…"
+	case SaveStateSaved:
+		return "已保存"
+	case SaveStateFailed:
+		return "保存失败"
+	default:
+		return "就绪"
+	}
+}
+
+// Save 立即落盘（原子写入，保留 .bak 备份）。
 func (s *store) Save() error {
-	s.mu.Lock()
-	b, err := json.MarshalIndent(s.cfg, "", "  ")
-	path := s.path
-	s.mu.Unlock()
+	s.setSaveState(SaveStateSaving, "")
+	err := data.SaveJSONAtomic(s.path, s.Config())
 	if err != nil {
+		s.setSaveState(SaveStateFailed, err.Error())
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0644)
+	s.setSaveState(SaveStateSaved, "")
+	return nil
 }
 
 // SaveDebounced 合并短时间内的多次修改，1 秒后统一落盘。
 //
 // 编辑器每敲一个字符都会触发保存，直接写盘在手机上会造成明显卡顿。
+// 定时器回调里的写入错误会通过 onSaveResult 回调交给界面提示，
+// 不再静默吞掉（之前 `_ = s.Save()` 导致写盘失败用户毫不知情）。
 func (s *store) SaveDebounced() {
+	s.setSaveState(SaveStatePending, "")
 	s.mu.Lock()
 	if s.saveTimer != nil {
 		s.saveTimer.Stop()
 	}
-	s.saveTimer = time.AfterFunc(time.Second, func() { _ = s.Save() })
+	s.saveTimer = time.AfterFunc(time.Second, func() { s.runDebouncedSave() })
+	fn := s.onSaveResult
+	s.mu.Unlock()
+	if fn != nil {
+		fn(nil) // 通知界面刷新为「有未保存的改动」
+	}
+}
+
+// runDebouncedSave 执行一次去抖写入，并把结果上报给已注册的回调。
+func (s *store) runDebouncedSave() {
+	err := s.Save()
+	s.mu.Lock()
+	fn := s.onSaveResult
+	s.mu.Unlock()
+	if fn != nil {
+		fn(err)
+	}
+}
+
+// SetSaveResultHandler 注册保存结果回调（nil 表示不关心）。
+//
+// 回调可能在定时器 goroutine 中触发，界面层需自行切回 UI 线程。
+func (s *store) SetSaveResultHandler(fn func(error)) {
+	s.mu.Lock()
+	s.onSaveResult = fn
+	s.mu.Unlock()
+}
+
+// SaveStatus 返回当前落盘状态与失败原因。
+func (s *store) SaveStatus() (SaveState, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveState, s.saveErr
+}
+
+// setSaveState 记录落盘状态（不触发回调；回调由 runDebouncedSave 统一上报）。
+func (s *store) setSaveState(state SaveState, detail string) {
+	s.mu.Lock()
+	s.saveState = state
+	s.saveErr = detail
 	s.mu.Unlock()
 }
 

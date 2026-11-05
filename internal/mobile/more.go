@@ -142,6 +142,7 @@ func (p *morePage) aiSettings() fyne.CanvasObject {
 
 	save := widget.NewButtonWithIcon("保存配置", theme.DocumentSaveIcon(), func() {
 		newProvider := data.AIProvider{
+			ID:      providers[active].ID,
 			Name:    strings.TrimSpace(name.Text),
 			BaseURL: strings.TrimSpace(baseURL.Text),
 			APIKey:  strings.TrimSpace(apiKey.Text),
@@ -152,8 +153,9 @@ func (p *morePage) aiSettings() fyne.CanvasObject {
 			newProvider.Name = "未命名服务"
 		}
 		providers[active] = newProvider
+		activeID := newProvider.ID
 		p.store.Update(func(c *data.Config) {
-			c.SetProviders(providers, active)
+			c.SelectProvidersByID(providers, activeID)
 		})
 		if err := p.store.Save(); err != nil {
 			status.SetText("保存失败：" + err.Error())

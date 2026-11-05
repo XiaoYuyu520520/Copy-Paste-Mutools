@@ -36,12 +36,10 @@ func (m *MainApp) installShortcuts(win fyne.Window) {
 		m.setStatus("已新建标签")
 	})
 	win.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: desktop.ControlModifier}, func(fyne.Shortcut) {
-		m.saveConfigNow()
-		m.setStatus("配置已保存")
+		m.saveWithFeedback()
 	})
 	win.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: desktop.SuperModifier}, func(fyne.Shortcut) {
-		m.saveConfigNow()
-		m.setStatus("配置已保存")
+		m.saveWithFeedback()
 	})
 	win.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: desktop.ControlModifier}, func(fyne.Shortcut) {
 		m.confirmCloseTab()

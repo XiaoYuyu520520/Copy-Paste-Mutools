@@ -36,7 +36,8 @@ type chatPage struct {
 	sessionSel *widget.Select
 
 	sessions *chatStore
-	updating bool // UI 线程内防止下拉框回调递归
+	updating bool   // UI 线程内防止下拉框回调递归
+	filter   string // 会话搜索关键字
 
 	// mu 保护下方全部共享状态（历史、发送态、取消函数、代次、当前会话）。
 	mu        sync.Mutex
@@ -67,26 +68,34 @@ func newChatPage(s *store, win fyne.Window) *chatPage {
 			return
 		}
 		idx := p.sessionSel.SelectedIndex()
-		list, _ := p.sessions.SessionList()
+		list, _ := p.sessions.SearchSessions(p.filter)
 		if idx < 0 || idx >= len(list) {
 			return
 		}
 		p.openSession(list[idx].ID)
 	})
 
+	search := widget.NewEntry()
+	search.SetPlaceHolder("搜索会话标题或内容")
+	search.OnChanged = func(text string) {
+		p.filter = text
+		p.refreshSessions()
+	}
+
 	newBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), p.newSession)
 	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), p.renameSession)
+	pinBtn := widget.NewButtonWithIcon("", theme.ContentPasteIcon(), p.togglePin)
 	clearBtn := widget.NewButtonWithIcon("", theme.ContentClearIcon(), p.clear)
 	delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), p.deleteSession)
 	top := container.NewBorder(nil, nil,
 		widget.NewLabel("AI 对话"),
-		container.NewHBox(newBtn, renameBtn, clearBtn, delBtn),
+		container.NewHBox(newBtn, renameBtn, pinBtn, clearBtn, delBtn),
 		p.sessionSel,
 	)
 
 	bottom := container.NewBorder(nil, p.status, nil, p.sendBtn, p.input)
 
-	p.root = container.NewBorder(top, bottom, nil, nil, p.scroll)
+	p.root = container.NewBorder(container.NewVBox(top, search), bottom, nil, nil, p.scroll)
 	p.loadActive()
 	p.refreshSessions()
 	return p
@@ -94,7 +103,7 @@ func newChatPage(s *store, win fyne.Window) *chatPage {
 
 // refreshSessions 重建会话下拉框。
 func (p *chatPage) refreshSessions() {
-	list, active := p.sessions.SessionList()
+	list, active := p.sessions.SearchSessions(p.filter)
 	opts := make([]string, len(list))
 	activeIdx := 0
 	for i, s := range list {
@@ -102,6 +111,12 @@ func (p *chatPage) refreshSessions() {
 		if title == "" {
 			title = "新会话"
 		}
+		// 置顶会话加标记，便于在列表里一眼分辨。
+		if s.Pinned {
+			title = "★ " + title
+		}
+		// 附上相对时间，帮助区分同名会话。
+		title += " · " + relativeTime(s.UpdatedAt)
 		opts[i] = fmt.Sprintf("%s", title)
 		if s.ID == active {
 			activeIdx = i
@@ -188,6 +203,36 @@ func (p *chatPage) renameSession() {
 		p.refreshSessions()
 	}, p.win)
 	p.status.SetText("当前会话：" + current.Title)
+}
+
+// relativeTime 把更新时间转成「刚刚 / N 分钟前 / N 小时前 / N 天前」。
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "未知"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "刚刚"
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟前", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d 小时前", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d 天前", int(d.Hours()/24))
+	}
+}
+
+// togglePin 置顶 / 取消置顶当前会话。
+func (p *chatPage) togglePin() {
+	p.mu.Lock()
+	id := p.sessionID
+	p.mu.Unlock()
+	if id == "" {
+		return
+	}
+	p.sessions.TogglePin(id)
+	p.refreshSessions()
 }
 
 func (p *chatPage) deleteSession() {

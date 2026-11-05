@@ -1,10 +1,8 @@
 package ui
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/ai"
 	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/chat"
 	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/data"
 )
@@ -33,8 +32,13 @@ type AISettingsPanel struct {
 	system  *widget.Entry
 	status  *widget.Label
 
-	OnSave          func(chat.Settings)
-	OnSaveProviders func([]data.AIProvider, int)
+	// OnSave 保存单个服务商配置；OnSaveProviders 保存整个服务商列表。
+	//
+	// 两者都应返回 error：设置面板据此判断是否真正写盘成功，
+	// 不再无条件显示「已保存」。为避免一次保存写盘两次，
+	// 面板只调用 OnSaveProviders（它已包含当前服务商内容）。
+	OnSave          func(chat.Settings) error
+	OnSaveProviders func([]data.AIProvider, int) error
 }
 
 // NewAISettingsPanel 构造 AI 设置页；onBack 返回编辑器。
@@ -208,7 +212,10 @@ func (p *AISettingsPanel) Value() chat.Settings {
 	}
 }
 
-// Save 校验并回调 OnSave / OnSaveProviders 落盘。
+// Save 校验并回调 OnSaveProviders 落盘。
+//
+// 只走 OnSaveProviders 一次写盘（它内部已同步当前生效服务商配置），
+// 避免之前 OnSave + OnSaveProviders 连续写两次、且无条件显示成功的问题。
 func (p *AISettingsPanel) Save() {
 	s := p.Value()
 	if s.BaseURL == "" {
@@ -230,16 +237,27 @@ func (p *AISettingsPanel) Save() {
 	if name == "" {
 		name = "未命名服务"
 	}
+	// 保留原 ID，编辑不改变服务商身份。
 	p.providers[p.active] = data.AIProvider{
-		Name: name, BaseURL: s.BaseURL, APIKey: s.APIKey, Model: s.Model, System: s.System,
+		ID:      p.providers[p.active].ID,
+		Name:    name,
+		BaseURL: s.BaseURL,
+		APIKey:  s.APIKey,
+		Model:   s.Model,
+		System:  s.System,
 	}
 	p.refreshProviderOptions()
 
-	if p.OnSave != nil {
-		p.OnSave(s)
-	}
 	if p.OnSaveProviders != nil {
-		p.OnSaveProviders(append([]data.AIProvider(nil), p.providers...), p.active)
+		if err := p.OnSaveProviders(append([]data.AIProvider(nil), p.providers...), p.active); err != nil {
+			p.setStatus("保存失败：" + err.Error())
+			return
+		}
+	} else if p.OnSave != nil {
+		if err := p.OnSave(s); err != nil {
+			p.setStatus("保存失败：" + err.Error())
+			return
+		}
 	}
 	p.setStatus(fmt.Sprintf("已保存「%s」✓ 底部点「AI 聊天」即可使用", name))
 }
@@ -253,45 +271,24 @@ func (p *AISettingsPanel) testConnection() {
 	}
 	p.setStatus("正在测试连接…")
 	go func() {
-		url := strings.TrimRight(s.BaseURL, "/") + "/models"
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			p.setStatusLater("测试失败：" + err.Error())
-			return
-		}
-		if s.APIKey != "" {
-			req.Header.Set("Authorization", "Bearer "+s.APIKey)
-		}
-		client := &http.Client{Timeout: 8 * time.Second}
-		resp, err := client.Do(req)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		ids, err := ai.ListModels(ctx, ai.Config{
+			BaseURL: s.BaseURL, APIKey: s.APIKey, Model: s.Model,
+		})
 		if err != nil {
 			p.setStatusLater("连接失败：" + err.Error())
 			return
 		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			var parsed struct {
-				Data []struct {
-					ID string `json:"id"`
-				} `json:"data"`
+		msg := "连接成功"
+		if len(ids) > 0 {
+			shown := ids
+			if len(shown) > 5 {
+				shown = shown[:5]
 			}
-			_ = json.Unmarshal(body, &parsed)
-			msg := fmt.Sprintf("连接成功（HTTP %d）", resp.StatusCode)
-			if len(parsed.Data) > 0 {
-				ids := make([]string, 0, 5)
-				for i, m := range parsed.Data {
-					if i >= 5 {
-						break
-					}
-					ids = append(ids, m.ID)
-				}
-				msg += "，示例模型：" + strings.Join(ids, ", ")
-			}
-			p.setStatusLater(msg)
-			return
+			msg += "，示例模型：" + strings.Join(shown, ", ")
 		}
-		p.setStatusLater(fmt.Sprintf("服务返回 HTTP %d：%s", resp.StatusCode, strings.TrimSpace(string(body))))
+		p.setStatusLater(msg)
 	}()
 }
 

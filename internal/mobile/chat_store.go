@@ -3,12 +3,13 @@ package mobile
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/data"
 )
 
 // chatSession 是一段可持久化的 AI 对话。
@@ -17,6 +18,7 @@ type chatSession struct {
 	Title     string    `json:"title"`
 	Messages  []chatMsg `json:"messages"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Pinned    bool      `json:"pinned,omitempty"`
 }
 
 type chatStoreFile struct {
@@ -47,12 +49,8 @@ func newChatStore(dir string) *chatStore {
 }
 
 func (c *chatStore) load() {
-	buf, err := os.ReadFile(c.path)
-	if err != nil {
-		return
-	}
 	var f chatStoreFile
-	if json.Unmarshal(buf, &f) != nil {
+	if _, err := data.LoadJSONWithBackup(c.path, &f); err != nil {
 		return
 	}
 	c.activeID = f.ActiveID
@@ -60,18 +58,7 @@ func (c *chatStore) load() {
 }
 
 func (c *chatStore) saveLocked() error {
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
-		return err
-	}
-	buf, err := json.MarshalIndent(chatStoreFile{ActiveID: c.activeID, Sessions: c.sessions}, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, buf, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, c.path)
+	return data.SaveJSONAtomic(c.path, chatStoreFile{ActiveID: c.activeID, Sessions: c.sessions})
 }
 
 func (c *chatStore) save() error {
@@ -80,13 +67,70 @@ func (c *chatStore) save() error {
 	return c.saveLocked()
 }
 
-// SessionList 返回会话快照（按更新时间倒序以外的稳定顺序：最新在前）。
+// SessionList 返回会话快照与当前会话 ID。
+//
+// 排序规则：置顶的会话排在最前，其余按最近使用时间（UpdatedAt）倒序，
+// 因此「刚刚聊过」的会话总是能在列表最上面找到。
 func (c *chatStore) SessionList() ([]chatSession, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]chatSession, len(c.sessions))
 	copy(out, c.sessions)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Pinned != out[j].Pinned {
+			return out[i].Pinned
+		}
+		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, c.activeID
+}
+
+// SearchSessions 按关键字过滤会话（匹配标题与消息正文）。
+func (c *chatStore) SearchSessions(keyword string) ([]chatSession, string) {
+	list, active := c.SessionList()
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	if kw == "" {
+		return list, active
+	}
+	out := make([]chatSession, 0, len(list))
+	for _, s := range list {
+		if sessionMatches(s, kw) {
+			out = append(out, s)
+		}
+	}
+	return out, active
+}
+
+// sessionMatches 判断会话是否命中关键字（标题或任一条消息正文）。
+func sessionMatches(s chatSession, lowerKeyword string) bool {
+	if strings.Contains(strings.ToLower(s.Title), lowerKeyword) {
+		return true
+	}
+	for _, m := range s.Messages {
+		if strings.Contains(strings.ToLower(m.Content), lowerKeyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// TogglePin 置顶 / 取消置顶指定会话，返回新的置顶状态。
+func (c *chatStore) TogglePin(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pinned := false
+	for i := range c.sessions {
+		if c.sessions[i].ID == id {
+			c.sessions[i].Pinned = !c.sessions[i].Pinned
+			pinned = c.sessions[i].Pinned
+			break
+		}
+	}
+	_ = c.saveLocked()
+	return pinned
 }
 
 // Active 返回当前会话快照。

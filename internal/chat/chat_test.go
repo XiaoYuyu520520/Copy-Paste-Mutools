@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -114,5 +115,39 @@ func TestHistoryRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(rec2.Body.String(), `"id":"a"`) {
 		t.Fatalf("历史未持久化: %s", rec2.Body.String())
+	}
+}
+
+// TestChatStreamsViaSharedParser 验证桌面端 /api/chat 也走统一的 SSE 解析：
+// 上游把一个事件拆成多行 data: 时，页面仍能收到完整正文。
+func TestChatStreamsViaSharedParser(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":\n")
+		io.WriteString(w, "data: {\"content\":\"好\"}}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	get := func() Settings {
+		return Settings{BaseURL: upstream.URL, Model: "m"}
+	}
+	h := New(render.Assets(), get)
+
+	rec := httptest.NewRecorder()
+	body := `{"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat = %d, want 200", rec.Code)
+	}
+	out := rec.Body.String()
+	if !strings.Contains(out, `"content":"你"`) || !strings.Contains(out, `"content":"好"`) {
+		t.Fatalf("多行 data: 未正确拼接: %s", out)
+	}
+	if !strings.Contains(out, `"type":"done"`) {
+		t.Fatalf("缺少 done 事件: %s", out)
 	}
 }

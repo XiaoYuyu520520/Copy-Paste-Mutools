@@ -49,16 +49,9 @@ func LoadTemplates(path string) (TemplateStore, error) {
 	return st, nil
 }
 
-// SaveTemplates 写入模板文件。
+// SaveTemplates 写入模板文件（原子写入，保留 .bak 备份）。
 func SaveTemplates(path string, st TemplateStore) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	buf, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, buf, 0o644)
+	return SaveJSONAtomic(path, st)
 }
 
 // NewTemplate 用当前标签快照创建模板。

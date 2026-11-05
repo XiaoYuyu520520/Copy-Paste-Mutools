@@ -42,3 +42,38 @@ func TestProviderCRUDAndActiveSync(t *testing.T) {
 		t.Fatal("must keep at least one provider")
 	}
 }
+
+func TestDeleteProviderKeepsSelectionByID(t *testing.T) {
+	c := DefaultConfig()
+	c.SetProviders([]AIProvider{
+		{Name: "A", BaseURL: "https://a", Model: "a"},
+		{Name: "B", BaseURL: "https://b", Model: "b"},
+		{Name: "C", BaseURL: "https://c", Model: "c"},
+		{Name: "D", BaseURL: "https://d", Model: "d"},
+	}, 2)
+	c.EnsureProviders()
+
+	selected := c.Providers[c.ActiveProvider]
+	if selected.Name != "C" {
+		t.Fatalf("setup: active = %q", selected.Name)
+	}
+	c.DeleteProvider(0) // 删除 A
+	if got := c.Providers[c.ActiveProvider]; got.ProviderID() != selected.ProviderID() || got.Name != "C" {
+		t.Fatalf("删除前面的项后应仍选中 C，实际 %q", got.Name)
+	}
+}
+
+func TestProviderIDsAssignedAndStable(t *testing.T) {
+	c := DefaultConfig()
+	c.SetProviders([]AIProvider{
+		{Name: "A", BaseURL: "https://a", Model: "a"},
+		{Name: "A", BaseURL: "https://a2", Model: "a"},
+	}, 0)
+	c.EnsureProviders()
+	if c.Providers[0].ID == "" || c.Providers[1].ID == "" {
+		t.Fatal("providers should get stable IDs")
+	}
+	if c.Providers[0].ID == c.Providers[1].ID {
+		t.Fatal("provider IDs must be unique")
+	}
+}

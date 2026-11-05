@@ -2,6 +2,8 @@ package data
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +24,65 @@ type AIConfig struct {
 
 // AIProvider 是一个可保存的服务商配置（不写死厂商）。
 type AIProvider struct {
+	// ID 是服务商的稳定唯一标识，用于删除/选中时精确定位，
+	// 避免依赖列表下标（删除前面的项后下标整体偏移导致选错）。
+	ID      string `json:"id,omitempty"`
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key,omitempty"`
 	Model   string `json:"model"`
 	System  string `json:"system,omitempty"`
+}
+
+// ProviderID 返回服务商 ID，空 ID 时基于内容生成一个稳定标识（不回写）。
+func (p AIProvider) ProviderID() string {
+	if p.ID != "" {
+		return p.ID
+	}
+	return providerIDFrom(p.BaseURL, p.Model, p.Name)
+}
+
+// providerIDFrom 由若干字段构造确定性 ID，同一内容在不同次运行中一致。
+func providerIDFrom(parts ...string) string {
+	h := fnv.New64a()
+	for i, s := range parts {
+		if i > 0 {
+			_, _ = h.Write([]byte("\x00"))
+		}
+		_, _ = h.Write([]byte(strings.TrimSpace(s)))
+	}
+	return fmt.Sprintf("p%016x", h.Sum64())
+}
+
+// ensureProviderIDs 给缺少 ID 的服务商补上 ID（兼容旧配置）。
+func (c *Config) ensureProviderIDs() {
+	used := map[string]struct{}{}
+	for i := range c.Providers {
+		id := c.Providers[i].ID
+		if id == "" {
+			id = c.Providers[i].ProviderID()
+		}
+		// 极端碰撞兜底：加后缀保证唯一。
+		base := id
+		for n := 1; ; n++ {
+			if _, taken := used[id]; !taken {
+				break
+			}
+			id = fmt.Sprintf("%s-%d", base, n)
+		}
+		c.Providers[i].ID = id
+		used[id] = struct{}{}
+	}
+}
+
+// FindProvider 按 ID 返回服务商下标，未找到返回 -1。
+func (c *Config) FindProvider(id string) int {
+	for i := range c.Providers {
+		if c.Providers[i].ProviderID() == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // ProviderFromAI 把当前生效配置转成服务商条目。
@@ -56,6 +112,7 @@ func (c *Config) EnsureProviders() {
 		}
 		c.ActiveProvider = 0
 	}
+	c.ensureProviderIDs()
 	if c.ActiveProvider < 0 || c.ActiveProvider >= len(c.Providers) {
 		c.ActiveProvider = 0
 	}
@@ -64,6 +121,9 @@ func (c *Config) EnsureProviders() {
 }
 
 // SetProviders 整体替换服务商列表（用于设置页保存）。
+//
+// active 可以是下标（向后兼容）或服务商 ID（字符串形式，经 SelectProvidersByID 使用）；
+// 这里仍按下标处理，但会确保每个条目都有稳定 ID。
 func (c *Config) SetProviders(list []AIProvider, active int) {
 	if len(list) == 0 {
 		c.Providers = nil
@@ -72,8 +132,31 @@ func (c *Config) SetProviders(list []AIProvider, active int) {
 		return
 	}
 	c.Providers = append([]AIProvider(nil), list...)
+	c.ensureProviderIDs()
 	if active < 0 || active >= len(c.Providers) {
 		active = 0
+	}
+	c.ActiveProvider = active
+	ai := c.Providers[active].ToAIConfig()
+	c.AI = &ai
+}
+
+// SelectProvidersByID 整体替换服务商列表并按 ID 选取当前生效项。
+//
+// 相比 SetProviders 的下标方式，删除/重排后仍能保持同一个服务商被选中。
+// 找不到该 ID 时回落到下标 0。
+func (c *Config) SelectProvidersByID(list []AIProvider, activeID string) {
+	if len(list) == 0 {
+		c.Providers = nil
+		c.AI = nil
+		c.EnsureProviders()
+		return
+	}
+	c.Providers = append([]AIProvider(nil), list...)
+	c.ensureProviderIDs()
+	active := 0
+	if idx := c.FindProvider(activeID); idx >= 0 {
+		active = idx
 	}
 	c.ActiveProvider = active
 	ai := c.Providers[active].ToAIConfig()
@@ -97,27 +180,47 @@ func (c *Config) UpsertProvider(idx int, p AIProvider) {
 		p.Name = "未命名服务"
 	}
 	if idx < 0 || idx >= len(c.Providers) {
+		if p.ID == "" {
+			p.ID = providerIDFrom(p.BaseURL, p.Model, p.Name)
+		}
 		c.Providers = append(c.Providers, p)
 		c.ActiveProvider = len(c.Providers) - 1
 	} else {
+		// 更新时保留原 ID，避免编辑导致 ID 漂移。
+		if p.ID == "" {
+			p.ID = c.Providers[idx].ProviderID()
+		}
 		c.Providers[idx] = p
 		c.ActiveProvider = idx
 	}
+	c.ensureProviderIDs()
 	ai := p.ToAIConfig()
 	c.AI = &ai
 }
 
 // DeleteProvider 删除服务商（至少保留一个）。
+//
+// 选中项按服务商唯一 ID 保持，而不是按下标：
+// 例 A,B,C,D 选中 C 删除 A 后仍选中 C（而非被下标偏移误选到 D）。
 func (c *Config) DeleteProvider(idx int) {
 	c.EnsureProviders()
 	if len(c.Providers) <= 1 || idx < 0 || idx >= len(c.Providers) {
 		return
 	}
+	activeID := c.Providers[c.ActiveProvider].ProviderID()
 	c.Providers = append(c.Providers[:idx], c.Providers[idx+1:]...)
-	if c.ActiveProvider >= len(c.Providers) {
-		c.ActiveProvider = len(c.Providers) - 1
+
+	active := 0
+	if a := c.FindProvider(activeID); a >= 0 {
+		active = a
+	} else if idx < len(c.Providers) {
+		// 删除的正是当前选中项：选中原位置的下一项（末尾则选前一项）。
+		active = idx
+	} else {
+		active = len(c.Providers) - 1
 	}
-	ai := c.Providers[c.ActiveProvider].ToAIConfig()
+	c.ActiveProvider = active
+	ai := c.Providers[active].ToAIConfig()
 	c.AI = &ai
 }
 
@@ -219,6 +322,13 @@ func LoadConfig() (Config, error) {
 	migrateLegacyConfig()
 	raw, err := os.ReadFile(ConfigPath())
 	if err != nil {
+		// 主文件缺失或不可读时尝试 .bak 备份，尽量不丢用户配置。
+		if bak, e := os.ReadFile(ConfigPath() + bakSuffix); e == nil {
+			raw = bak
+			err = nil
+		}
+	}
+	if err != nil {
 		return cfg, err
 	}
 
@@ -262,14 +372,10 @@ func LoadConfig() (Config, error) {
 	return cfg, nil
 }
 
-// SaveConfig 将配置写回磁盘。
+// SaveConfig 将配置写回磁盘（原子写入，保留 .bak 备份）。
 func SaveConfig(c Config) error {
-	buf, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := EnsureStorageDir(); err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigPath(), buf, 0644)
+	return SaveJSONAtomic(ConfigPath(), c)
 }

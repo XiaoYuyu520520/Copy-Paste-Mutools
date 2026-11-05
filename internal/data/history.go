@@ -1,7 +1,6 @@
 package data
 
 import (
-	"encoding/json"
 	"os"
 	"time"
 )
@@ -15,31 +14,23 @@ type HistoryEntry struct {
 // MaxHistory 历史记录最大保留条数。
 const MaxHistory = 200
 
-// LoadHistory 读取 history.json。失败返回 nil。
+// LoadHistory 读取 history.json；主文件缺失/损坏时回退到 .bak。失败返回 nil。
 func LoadHistory(dataDir string) []HistoryEntry {
 	path := HistoryPath(dataDir)
-	buf, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
 	var entries []HistoryEntry
-	if err := json.Unmarshal(buf, &entries); err != nil {
+	if _, err := LoadJSONWithBackup(path, &entries); err != nil {
 		return nil
 	}
 	return entries
 }
 
-// SaveHistory 写入 history.json，若 dataDir 为空则用 exe 同级目录。
+// SaveHistory 写入 history.json（原子写入，保留 .bak 备份）。
 func SaveHistory(entries []HistoryEntry, dataDir string) error {
 	if dataDir == "" {
 		dataDir = ExecDir()
 	}
 	_ = os.MkdirAll(dataDir, 0755)
-	buf, err := json.MarshalIndent(entries, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(HistoryPath(dataDir), buf, 0644)
+	return SaveJSONAtomic(HistoryPath(dataDir), entries)
 }
 
 // AppendHistory 在尾部追加一条，超过 MaxHistory 自动丢弃最旧。
