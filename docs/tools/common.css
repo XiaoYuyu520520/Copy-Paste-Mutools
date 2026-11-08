@@ -147,6 +147,17 @@ kbd {
   padding: 0 4px;
   margin-left: 4px;
 }
+/* 主按钮（强调色底）里的快捷键提示：改用半透明白色，否则深色字在蓝底上几乎看不见 */
+button kbd {
+  color: rgba(255, 255, 255, .92);
+  background: rgba(255, 255, 255, .16);
+  border-color: rgba(255, 255, 255, .32);
+}
+button.ghost kbd {
+  color: var(--muted);
+  background: var(--panel-2);
+  border-color: var(--border);
+}
 
 .hint { color: var(--muted); font-size: 13px; }
 .status { font-size: 13px; min-height: 20px; transition: color .15s; }
