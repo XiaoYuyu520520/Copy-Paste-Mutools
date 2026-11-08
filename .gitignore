@@ -83,3 +83,6 @@ npm-debug.log*
 Thumbs.db
 desktop.ini
 *.swp
+
+# 本地 UI 截图（cmd/screenshot 输出）
+/screenshots/
