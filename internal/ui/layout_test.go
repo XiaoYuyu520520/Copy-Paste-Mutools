@@ -17,7 +17,8 @@ import (
 	"github.com/XiaoYuyu520520/Copy-Paste-Mutools/internal/data"
 )
 
-// walk 递归遍历 widget 树，包括 *fyne.Container / *container.Split / *container.Scroll。
+// walk 递归遍历 widget 树，包括 *fyne.Container / *container.Split / *container.Scroll /
+// 窗口最小尺寸包装 *minSizeContainer。
 func walk(obj fyne.CanvasObject, fn func(fyne.CanvasObject)) {
 	if obj == nil {
 		return
@@ -35,6 +36,8 @@ func walk(obj fyne.CanvasObject, fn func(fyne.CanvasObject)) {
 		walk(o.Content, fn)
 	case *container.Clip:
 		walk(o.Content, fn)
+	case *minSizeContainer:
+		walk(o.inner, fn)
 	}
 }
 
@@ -100,6 +103,10 @@ func treeString(obj fyne.CanvasObject, depth int) string {
 		out := prefix + name + "\n"
 		out += treeString(o.Content, depth+1)
 		return out
+	case *minSizeContainer:
+		out := prefix + name + "\n"
+		out += treeString(o.inner, depth+1)
+		return out
 	}
 	return prefix + name + "\n"
 }
@@ -119,6 +126,10 @@ func TestMainWindow_LayoutStructure(t *testing.T) {
 	root := win.Canvas().Content()
 	if root == nil {
 		t.Fatal("window content is nil")
+	}
+	// 窗口内容外面包了一层最小尺寸容器，布局断言要看它里面的那层。
+	if ms, ok := root.(*minSizeContainer); ok {
+		root = ms.inner
 	}
 
 	// 1) 顶层应该是 BorderLayout

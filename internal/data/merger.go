@@ -113,6 +113,47 @@ func AddBlock(t TabConfig) TabConfig {
 	return ResizeTab(t, len(t.Prompts)+1)
 }
 
+// InsertBlock 在 idx 处插入一个空区块（idx 之后的原有区块整体后移）。
+//
+// idx 越界时按边界处理：<=0 插到最前，>= 区块数插到最后，
+// 因此调用方既可以用「在第 i 块上方插入」= InsertBlock(t, i)，
+// 也可以用「在末尾追加」= InsertBlock(t, len(t.Prompts))。
+func InsertBlock(t TabConfig, idx int) TabConfig {
+	t = NormalizeTab(t)
+	n := len(t.Prompts)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > n {
+		idx = n
+	}
+	prompts := make([]Item, 0, n+1)
+	prompts = append(prompts, t.Prompts[:idx]...)
+	prompts = append(prompts, Item{Enabled: true})
+	prompts = append(prompts, t.Prompts[idx:]...)
+
+	sentences := make([]Item, 0, n+1)
+	sentences = append(sentences, t.Sentences[:idx]...)
+	sentences = append(sentences, Item{Enabled: true})
+	sentences = append(sentences, t.Sentences[idx:]...)
+
+	names := make([]string, 0, n+1)
+	names = append(names, t.BlockNames[:idx]...)
+	names = append(names, "")
+	names = append(names, t.BlockNames[idx:]...)
+
+	collapsed := make([]bool, 0, n+1)
+	collapsed = append(collapsed, t.Collapsed[:idx]...)
+	collapsed = append(collapsed, false)
+	collapsed = append(collapsed, t.Collapsed[idx:]...)
+
+	t.Prompts = prompts
+	t.Sentences = sentences
+	t.BlockNames = names
+	t.Collapsed = collapsed
+	return t
+}
+
 // RemoveBlock 删除指定区块（至少保留一个）。
 func RemoveBlock(t TabConfig, idx int) TabConfig {
 	t = NormalizeTab(t)

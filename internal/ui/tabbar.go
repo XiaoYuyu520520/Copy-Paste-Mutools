@@ -35,6 +35,8 @@ type customTabBar struct {
 
 	mu       sync.Mutex
 	onSelect func(idx int) // idx=-1 表示新增
+	// onSecondary 由右键标签触发：参数为标签下标与画布绝对坐标。
+	onSecondary func(idx int, pos fyne.Position)
 
 	root     fyne.CanvasObject
 	stripBox *fyne.Container
@@ -121,6 +123,13 @@ func (b *customTabBar) SetCloseHandler(onClose func()) {
 	}
 }
 
+// SetSecondaryHandler 注册右键标签回调（下标 + 画布绝对坐标）。
+func (b *customTabBar) SetSecondaryHandler(fn func(idx int, pos fyne.Position)) {
+	b.mu.Lock()
+	b.onSecondary = fn
+	b.mu.Unlock()
+}
+
 // View 返回根容器。
 func (b *customTabBar) View() fyne.CanvasObject { return b.root }
 
@@ -193,11 +202,21 @@ func (b *customTabBar) refresh() {
 		item := &tabItem{text: widget.NewRichText(), name: title}
 		applyTabStyle(item, i == selected)
 
-		tap := &tapArea{onTap: func() {
-			if b.onSelect != nil {
-				b.onSelect(idx)
-			}
-		}}
+		tap := &tapArea{
+			onTap: func() {
+				if b.onSelect != nil {
+					b.onSelect(idx)
+				}
+			},
+			onSecondary: func(pos fyne.Position) {
+				b.mu.Lock()
+				fn := b.onSecondary
+				b.mu.Unlock()
+				if fn != nil {
+					fn(idx, pos)
+				}
+			},
+		}
 		// 自定义布局让文字居中，Tappable 覆盖整块区域
 		wrap := container.New(&tabItemLayout{text: item.text, tap: tap}, item.text, tap)
 

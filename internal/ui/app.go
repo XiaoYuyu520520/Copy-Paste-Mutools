@@ -19,6 +19,9 @@ import (
 
 const saveDebounce = 1500 * time.Millisecond
 
+// latestMainApp 是最近一次 NewMainWindow 构造的实例，仅供单元测试使用。
+var latestMainApp *MainApp
+
 type tabBundle struct {
 	editor *TabEditor
 }
@@ -104,6 +107,9 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	} else {
 		win.Resize(fyne.NewSize(1240, 820))
 	}
+	// 编辑器每行要放下「96 px 左列 + 两列输入框」，窗口再窄就会挤压变形；
+	// Fyne 的 Window 没有 SetMinSize，这里用一个带最小尺寸的布局容器兜底：
+	// 窗口小于该尺寸时内容不跟随缩小，保持可读布局。
 	win.CenterOnScreen()
 	m.win = win
 
@@ -121,6 +127,7 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	// ---- 多标签编辑器 ----
 	m.tabBar = NewCustomTabBar(m.onTabSelect)
 	m.tabBar.SetCloseHandler(m.confirmCloseTab)
+	m.tabBar.SetSecondaryHandler(m.showTabContextMenu)
 
 	m.contentBox = container.NewStack()
 	if len(m.cfg.Tabs) == 0 {
@@ -194,12 +201,12 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	// ---- 整体主体：左竖向导航 + 右内容层叠 ----
 	body := container.NewBorder(nil, nil, container.NewPadded(m.rail.View()), nil, contentStack)
 
-	win.SetContent(container.NewBorder(
+	win.SetContent(newMinSizeContainer(container.NewBorder(
 		nil,
 		statusBar,
 		nil, nil,
 		body,
-	))
+	), minWindowWidth, minWindowHeight))
 
 	win.SetOnClosed(func() {
 		if size := win.Canvas().Size(); size.Width > 0 && size.Height > 0 {
@@ -212,6 +219,9 @@ func NewMainWindow(a fyne.App, cfg *data.Config) fyne.Window {
 	m.installShortcuts(win)
 
 	m.selectFeature(featEditor)
+
+	// latestMainApp 供单元测试取回实例（同 latestTabBar 的做法）。
+	latestMainApp = m
 
 	// 初次进入强制合并一次
 	fyne.Do(func() {
@@ -369,6 +379,7 @@ func (m *MainApp) addBundle(title string, cfg data.TabConfig) {
 		}
 	}
 	editor.OnRename = func() { m.tabBar.SetBundles(m.bundles) }
+	editor.OnStatus = m.setStatus
 
 	bundle := &tabBundle{editor: editor}
 	m.bundles = append(m.bundles, bundle)
@@ -460,6 +471,180 @@ func (m *MainApp) addBlankTab() {
 	m.tabBar.SetBundles(m.bundles)
 	m.selectTab(len(m.bundles) - 1)
 	m.updateTabCount()
+}
+
+// ---------- 标签右键菜单与批量操作 ----------
+
+// showTabContextMenu 在标签上右键时弹出菜单。
+func (m *MainApp) showTabContextMenu(idx int, pos fyne.Position) {
+	if idx < 0 || idx >= len(m.bundles) {
+		return
+	}
+	n := len(m.bundles)
+
+	rename := menuItemWithShortcut("重命名…", fyne.KeyR, fyne.KeyModifierControl|fyne.KeyModifierShift, func() {
+		m.selectTab(idx)
+		m.showRenameDialog()
+	})
+	dup := fyne.NewMenuItem("复制此标签", func() {
+		m.duplicateTab(idx)
+	})
+	closeOne := menuItemWithShortcut("关闭此标签", fyne.KeyW, fyne.KeyModifierControl, func() {
+		m.closeTab(idx, true)
+	})
+	closeOthers := fyne.NewMenuItem("关闭其他标签", func() {
+		m.closeTabsExcept(idx)
+	})
+	// 关闭右侧：右键的标签在末尾时没有可关闭项。
+	hasRight := idx < n-1
+	closeRight := fyne.NewMenuItem("关闭右侧标签", func() {
+		m.closeTabsRightOf(idx)
+	})
+	closeRight.Disabled = !hasRight
+
+	moveLeft := fyne.NewMenuItem("左移标签", func() { m.moveTab(idx, idx-1) })
+	moveLeft.Disabled = idx <= 0
+	moveRight := fyne.NewMenuItem("右移标签", func() { m.moveTab(idx, idx+1) })
+	moveRight.Disabled = idx >= n-1
+
+	copyBtn := fyne.NewMenuItem("复制合并结果", func() {
+		m.copyMerged(m.bundles[idx].editor)
+	})
+
+	items := buildMenu(
+		rename, dup, nil,
+		copyBtn, nil,
+		moveLeft, moveRight, nil,
+		closeOne, closeOthers, closeRight,
+	)
+	if len(items) == 0 {
+		return
+	}
+	showContextMenu(m.win, pos, items...)
+}
+
+// copyMerged 把编辑器当前的合并结果写入剪贴板。
+func (m *MainApp) copyMerged(e *TabEditor) {
+	if e == nil || e.preview == nil || e.preview.Text == "" {
+		m.setStatus("暂无合并内容")
+		return
+	}
+	fyne.CurrentApp().Clipboard().SetContent(e.preview.Text)
+	m.setStatus(fmt.Sprintf("已复制合并结果（%d 字符）", len([]rune(e.preview.Text))))
+}
+
+// duplicateTab 在 idx 之后插入一份内容相同的标签。
+func (m *MainApp) duplicateTab(idx int) {
+	if idx < 0 || idx >= len(m.bundles) {
+		return
+	}
+	src := data.NormalizeTab(m.bundles[idx].editor.Config)
+	title := m.bundles[idx].editor.Title + " 副本"
+	src.Name = title
+
+	m.cfg.Tabs = append(m.cfg.Tabs, src)
+	m.addBundle(title, src)
+
+	// 新标签已追加到末尾，把它移到 idx+1 位置，保持「副本紧跟原标签」。
+	m.moveTab(len(m.bundles)-1, idx+1)
+	m.tabBar.SetBundles(m.bundles)
+	m.selectTab(idx + 1)
+	m.updateTabCount()
+	m.setStatus("已复制标签「" + title + "」")
+}
+
+// moveTab 把标签 from 移到 to；同步配置、控件与标签栏的顺序。
+func (m *MainApp) moveTab(from, to int) {
+	n := len(m.bundles)
+	if from < 0 || from >= n || to < 0 || to >= n || from == to {
+		return
+	}
+	// 三个平行切片用同一个「移动元素」算法，保证顺序始终一致。
+	moveBundle := func(a, b int) {
+		v := m.bundles[a]
+		if a < b {
+			copy(m.bundles[a:b], m.bundles[a+1:b+1])
+		} else {
+			copy(m.bundles[b+1:a+1], m.bundles[b:a])
+		}
+		m.bundles[b] = v
+	}
+	moveConfig := func(a, b int) {
+		v := m.cfg.Tabs[a]
+		if a < b {
+			copy(m.cfg.Tabs[a:b], m.cfg.Tabs[a+1:b+1])
+		} else {
+			copy(m.cfg.Tabs[b+1:a+1], m.cfg.Tabs[b:a])
+		}
+		m.cfg.Tabs[b] = v
+	}
+	moveView := func(a, b int) {
+		v := m.contentBox.Objects[a]
+		if a < b {
+			copy(m.contentBox.Objects[a:b], m.contentBox.Objects[a+1:b+1])
+		} else {
+			copy(m.contentBox.Objects[b+1:a+1], m.contentBox.Objects[b:a])
+		}
+		m.contentBox.Objects[b] = v
+	}
+	moveBundle(from, to)
+	moveConfig(from, to)
+	moveView(from, to)
+
+	m.tabBar.SetBundles(m.bundles)
+	m.tabBar.SetSelected(m.cfg.ActiveTab)
+	m.updateTabCount()
+	m.scheduleSaveConfig()
+}
+
+// closeTab 关闭第 idx 个标签。
+//
+// 只有「有内容」或「这是最后一个标签」时才确认：
+// 空标签直接关闭，避免熟练用户每次都被确认框打断。
+func (m *MainApp) closeTab(idx int, confirmDirty bool) {
+	if idx < 0 || idx >= len(m.bundles) {
+		return
+	}
+	if confirmDirty {
+		hasContent := m.bundles[idx].editor.hasContent()
+		if hasContent || len(m.bundles) <= 1 {
+			m.tabBar.SetSelected(idx)
+			m.confirmCloseTab()
+			return
+		}
+	}
+	m.onTabClose(idx)
+}
+
+// closeTabsExcept 只保留第 keep 个标签。
+//
+// 从后往前删，避免 keep 的下标在删除过程中漂移。
+func (m *MainApp) closeTabsExcept(keep int) {
+	if keep < 0 || keep >= len(m.bundles) {
+		return
+	}
+	for i := len(m.bundles) - 1; i >= 0; i-- {
+		if i == keep {
+			continue
+		}
+		m.onTabClose(i)
+	}
+	m.selectTab(keep)
+	m.tabBar.SetBundles(m.bundles)
+	m.setStatus("已关闭其他标签")
+}
+
+// closeTabsRightOf 关闭第 idx 个标签右侧的全部标签。
+func (m *MainApp) closeTabsRightOf(idx int) {
+	if idx < 0 || idx >= len(m.bundles) {
+		return
+	}
+	for len(m.bundles) > idx+1 {
+		m.onTabClose(len(m.bundles) - 1)
+	}
+	m.selectTab(idx)
+	m.tabBar.SetBundles(m.bundles)
+	m.setStatus("已关闭右侧标签")
 }
 
 func (m *MainApp) updateTabCount() {

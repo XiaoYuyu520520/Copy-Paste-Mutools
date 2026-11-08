@@ -32,7 +32,11 @@ type TabEditor struct {
 	rows    []*editorRow
 	rowsBox *fyne.Container
 
-	preview     *widget.Entry
+	// activeRowIdx 是「最后聚焦的区块」下标，Alt+↑/↓、Ctrl+F 都作用在它上面。
+	// 未聚焦过任何区块时为 0。
+	activeRowIdx int
+
+	preview     *previewEntry
 	previewCard *cardPanel
 	rowsScroll  *container.Scroll
 
@@ -54,6 +58,8 @@ type TabEditor struct {
 	OnDirty    func()
 	OnDirtyNow func()
 	OnRename   func()
+	// OnStatus 把区块操作结果回报给主窗口状态栏。
+	OnStatus func(text string)
 
 	mergeTimer *time.Timer
 	saveTimer  *time.Timer
@@ -98,7 +104,20 @@ func NewTabEditor(title string, tab data.TabConfig, win fyne.Window) *TabEditor 
 func (e *TabEditor) build() {
 	e.rowsBox = container.NewVBox()
 
-	e.preview = makeCodeEntry()
+	// 预览框是禁用状态，Fyne 自带的英文右键菜单不合适；
+	// 换成自定义的 previewEntry（中文「复制全部」）。
+	copyAll := func() {
+		if e.preview == nil || e.preview.Text == "" {
+			return
+		}
+		if app := fyne.CurrentApp(); app != nil {
+			app.Clipboard().SetContent(e.preview.Text)
+			if e.OnMerged != nil {
+				e.OnMerged("__copied__")
+			}
+		}
+	}
+	e.preview = newPreviewEntry(copyAll)
 	e.preview.Disable()
 	e.preview.Wrapping = fyne.TextWrapWord
 }
@@ -366,6 +385,10 @@ func (e *TabEditor) Recolor() {
 }
 
 // makeRow 单个区块：可折叠标题行 + 提示词/语句两列。
+//
+// 标题行右侧只保留「折叠」与「⋯」两个控件：上移 / 下移 / 复制 / 删除 /
+// 在上方插入全部收进 ⋯ 菜单（也可以在行内右键呼出同一个菜单），
+// 避免每行 5 个图标按钮挤在一起。
 func (e *TabEditor) makeRow(i int) *editorRow {
 	row := &editorRow{}
 
@@ -396,61 +419,31 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		}
 	}
 
-	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() {
-		e.Config = data.MoveBlock(e.Config, i, i-1)
-		e.pushUndo()
-		e.rebuildRows()
-		e.scheduleMerge()
-		e.scheduleSave()
-	})
-	upBtn.Importance = widget.LowImportance
-	if i == 0 {
-		upBtn.Disable()
+	// 行操作统一走 e.rowMenuItems(i)，⋯ 按钮与右键菜单共用同一份条目。
+	rowMenu := func(pos fyne.Position) {
+		showContextMenu(e.window, pos, e.rowMenuItems(i)...)
 	}
-
-	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() {
-		e.Config = data.MoveBlock(e.Config, i, i+1)
-		e.pushUndo()
-		e.rebuildRows()
-		e.scheduleMerge()
-		e.scheduleSave()
+	var moreBtn *widget.Button
+	moreBtn = widget.NewButtonWithIcon("", theme.MoreHorizontalIcon(), func() {
+		// ⋯ 按钮没有 PointEvent，用按钮自身位置弹出菜单。
+		pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(moreBtn)
+		pos = pos.AddXY(moreBtn.Size().Width, moreBtn.Size().Height)
+		rowMenu(pos)
 	})
-	downBtn.Importance = widget.LowImportance
-	if i == len(e.Config.Prompts)-1 {
-		downBtn.Disable()
-	}
-
-	copyBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
-		e.Config = data.DuplicateBlock(e.Config, i)
-		e.pushUndo()
-		e.rebuildRows()
-		e.scheduleMerge()
-		e.scheduleSave()
-	})
-	copyBtn.Importance = widget.LowImportance
-
-	delBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
-		if len(e.Config.Prompts) <= 1 {
-			return
-		}
-		e.Config = data.RemoveBlock(e.Config, i)
-		e.pushUndo()
-		e.rebuildRows()
-		e.scheduleMerge()
-		e.scheduleSave()
-	})
-	delBtn.Importance = widget.LowImportance
-	if len(e.Config.Prompts) <= 1 {
-		delBtn.Disable()
-	}
+	moreBtn.Importance = widget.LowImportance
 
 	header := container.NewBorder(nil, nil,
 		container.NewHBox(collapseBtn, row.name),
-		container.NewHBox(upBtn, downBtn, copyBtn, delBtn),
+		container.NewHBox(moreBtn),
 		nil,
 	)
 
-	row.root = container.NewVBox(header)
+	// 行内容：标题行 + （展开时）输入区。
+	bodyBox := container.NewVBox(header)
+	// 行根：内容 + 只响应右键的命中层（绘制在最上层）。
+	// 详见 secondaryArea 的注释：输入框上右键仍是原生菜单，
+	// 行内空白处右键才弹出本区块的操作菜单。
+	row.root = container.NewStack(bodyBox, &secondaryArea{onSecondary: rowMenu})
 	if collapsed {
 		return row
 	}
@@ -523,10 +516,193 @@ func (e *TabEditor) makeRow(i int) *editorRow {
 		&editorRowLayout{LeftWidth: 96, Gap: 8},
 		leftCol, promptArea, sentenceArea,
 	)
-	row.root.(*fyne.Container).Add(row.body)
+	bodyBox.Add(row.body)
 	return row
 }
 
+// ---------- 区块菜单与批量操作 ----------
+
+// rowMenuItems 生成第 i 个区块的操作菜单。
+//
+// 同一份条目同时给标题行「⋯」按钮和行内右键菜单使用；
+// 首块禁用「上移」、末块禁用「下移」、只剩一块时禁用「删除」。
+func (e *TabEditor) rowMenuItems(i int) []*fyne.MenuItem {
+	n := len(e.Config.Prompts)
+	up := menuItemWithShortcut("上移", fyne.KeyUp, fyne.KeyModifierAlt, func() {
+		e.moveBlockTo(i, i-1)
+	})
+	up.Disabled = i <= 0
+	down := menuItemWithShortcut("下移", fyne.KeyDown, fyne.KeyModifierAlt, func() {
+		e.moveBlockTo(i, i+1)
+	})
+	down.Disabled = i >= n-1
+	dup := fyne.NewMenuItem("复制本区块", func() {
+		e.applyBlockOp(data.DuplicateBlock(e.Config, i), i+1, "已复制区块")
+	})
+	insertAbove := fyne.NewMenuItem("在上方插入空区块", func() {
+		e.applyBlockOp(data.InsertBlock(e.Config, i), i, "已在上方插入区块")
+	})
+	insertBelow := fyne.NewMenuItem("在下方插入空区块", func() {
+		e.applyBlockOp(data.InsertBlock(e.Config, i+1), i+1, "已在下方插入区块")
+	})
+	del := fyne.NewMenuItem("删除本区块", func() {
+		if n <= 1 {
+			return
+		}
+		// 删除后焦点落在原位置或其上一条，保证 Alt+↑/↓ 仍有作用对象。
+		next := i
+		if next > n-2 {
+			next = n - 2
+		}
+		e.applyBlockOp(data.RemoveBlock(e.Config, i), next, "已删除区块")
+	})
+	del.Disabled = n <= 1
+
+	onPrompt := fyne.NewMenuItem("提示词参与合并", func() {
+		e.setEnabled(i, "prompt", !e.Config.Prompts[i].Enabled)
+	})
+	onPrompt.Checked = e.Config.Prompts[i].Enabled
+	onSentence := fyne.NewMenuItem("语句参与合并", func() {
+		e.setEnabled(i, "sentence", !e.Config.Sentences[i].Enabled)
+	})
+	onSentence.Checked = e.Config.Sentences[i].Enabled
+
+	return buildMenu(
+		up, down,
+		nil,
+		insertAbove, insertBelow,
+		nil,
+		dup, del,
+		nil,
+		onPrompt, onSentence,
+	)
+}
+
+// moveBlockTo 把区块 i 移到 to（越界、原地不动或目标已被占用时忽略）。
+func (e *TabEditor) moveBlockTo(i, to int) {
+	if to < 0 || to >= len(e.Config.Prompts) || to == i {
+		return
+	}
+	e.applyBlockOp(data.MoveBlock(e.Config, i, to), to, "已移动区块")
+}
+
+// applyBlockOp 应用一次结构操作：记录撤销点、重建行、刷新合并与落盘。
+//
+// newActive 是操作后希望成为「当前区块」的下标，
+// 用于让 Alt+↑/↓ 连续按同一方向时作用对象能跟着走。
+func (e *TabEditor) applyBlockOp(next data.TabConfig, newActive int, status string) {
+	e.pushUndo()
+	e.Config = next
+	if len(e.Config.Prompts) > 0 {
+		if newActive < 0 {
+			newActive = 0
+		}
+		if newActive >= len(e.Config.Prompts) {
+			newActive = len(e.Config.Prompts) - 1
+		}
+		e.activeRowIdx = newActive
+	}
+	e.rebuildRows()
+	e.scheduleMerge()
+	e.scheduleSave()
+	if status != "" && e.OnStatus != nil {
+		e.OnStatus(status)
+	}
+}
+
+// setEnabled 切换第 i 块「提示词」或「语句」是否参与合并，并同步复选框。
+func (e *TabEditor) setEnabled(i int, which string, on bool) {
+	if i < 0 || i >= len(e.Config.Prompts) {
+		return
+	}
+	switch which {
+	case "prompt":
+		e.Config.Prompts[i].Enabled = on
+		if row := e.rowAt(i); row != nil && row.promptOn != nil {
+			row.promptOn.SetChecked(on)
+		}
+	case "sentence":
+		e.Config.Sentences[i].Enabled = on
+		if row := e.rowAt(i); row != nil && row.sentenceOn != nil {
+			row.sentenceOn.SetChecked(on)
+		}
+	}
+	e.scheduleMerge()
+	e.scheduleSave()
+}
+
+// rowAt 返回第 i 块的控件（可能为 nil，例如受控对象尚未构建）。
+func (e *TabEditor) rowAt(i int) *editorRow {
+	if i < 0 || i >= len(e.rows) {
+		return nil
+	}
+	return e.rows[i]
+}
+
+// activeRow 返回「当前区块」的控件。
+//
+// 优先级：正在聚焦的输入框所在行 → 上次手动指定的行 → 第一行。
+func (e *TabEditor) activeRow() *editorRow {
+	if row := e.focusedRow(); row != nil {
+		return row
+	}
+	if row := e.rowAt(e.activeRowIdx); row != nil {
+		return row
+	}
+	return e.rowAt(0)
+}
+
+// focusedRow 通过画布焦点反查所在区块。
+//
+// 只在真实窗口（window != nil）里查询；测试环境 window 为 nil 时
+// 直接返回 nil，走 activeRowIdx 兜底。
+func (e *TabEditor) focusedRow() *editorRow {
+	if e.window == nil || e.window.Canvas() == nil {
+		return nil
+	}
+	focused := e.window.Canvas().Focused()
+	if focused == nil {
+		return nil
+	}
+	for _, row := range e.rows {
+		if row == nil {
+			continue
+		}
+		if (row.prompt != nil && focused == fyne.Focusable(row.prompt)) ||
+			(row.sentence != nil && focused == fyne.Focusable(row.sentence)) {
+			return row
+		}
+	}
+	return nil
+}
+
+// activeRowIndex 返回当前区块下标（找不到时为 activeRowIdx）。
+func (e *TabEditor) activeRowIndex() int {
+	if row := e.focusedRow(); row != nil {
+		for i, r := range e.rows {
+			if r == row {
+				return i
+			}
+		}
+	}
+	if e.activeRowIdx < 0 || e.activeRowIdx >= len(e.rows) {
+		return 0
+	}
+	return e.activeRowIdx
+}
+
+// moveActiveBlock 把当前区块移动 delta 格（Alt+↑/-1、Alt+↓/+1）。
+func (e *TabEditor) moveActiveBlock(delta int) {
+	i := e.activeRowIndex()
+	e.moveBlockTo(i, i+delta)
+}
+
+// AddBlockAtEnd 在末尾追加一个空区块（Ctrl+Shift+N）。
+func (e *TabEditor) AddBlockAtEnd() {
+	e.applyBlockOp(data.AddBlock(e.Config), len(e.Config.Prompts), "已在末尾新增区块")
+}
+
+// ---------- 撤销 / 重做 ----------
 // maxUndoDepth 是撤销栈的最大层数。
 const maxUndoDepth = 50
 
@@ -715,6 +891,30 @@ func (e *TabEditor) Clear() {
 		e.Config.Sentences[i].Text = ""
 		e.Config.BlockNames[i] = ""
 	}
+}
+
+// hasContent 判断标签里是否有用户输入（任一区块标题/提示词/语句非空）。
+// 「关闭标签」用它决定是否需要确认。
+func (e *TabEditor) hasContent() bool {
+	if e == nil {
+		return false
+	}
+	for _, b := range e.Config.BlockNames {
+		if trimSpaces(b) != "" {
+			return true
+		}
+	}
+	for _, it := range e.Config.Prompts {
+		if trimSpaces(it.Text) != "" {
+			return true
+		}
+	}
+	for _, it := range e.Config.Sentences {
+		if trimSpaces(it.Text) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveCount 返回合并后非空的区块数（含勾选状态过滤）。
