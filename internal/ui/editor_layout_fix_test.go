@@ -31,6 +31,11 @@ func TestEditorPreviewAndRowsUseBoundedLayout(t *testing.T) {
 		t.Fatalf("preview height=%v, want fixed %v", got, previewMinSize)
 	}
 
+	// 预览卡片必须固定高度，不能被 Border 拉伸到盖住编辑区。
+	if got := editor.previewCard.root.Size().Height; got > previewHeight+1 {
+		t.Fatalf("preview card height=%v, want <= %v", got, previewHeight)
+	}
+
 	if editor.rowsScroll == nil {
 		t.Fatal("rows scroll was not captured")
 	}

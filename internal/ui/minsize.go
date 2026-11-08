@@ -1,6 +1,9 @@
 package ui
 
-import "fyne.io/fyne/v2"
+import (
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/widget"
+)
 
 // 窗口最小可用尺寸：
 //   - 宽度要放下「左侧导航 + 96 px 区块左列 + 两列输入框 + 状态栏三个工具按钮」；
@@ -15,31 +18,45 @@ const (
 // 而不是把两列输入框挤到不可用。
 //
 // Fyne 的 fyne.Window 没有 SetMinSize；用这个容器达到同样的「布局不被压坏」效果。
+//
+// 注意：必须实现 fyne.Widget（BaseWidget + Renderer），
+// 只实现 fyne.CanvasObject 的话 Fyne 不会渲染它（窗口会一片空白）。
 type minSizeContainer struct {
+	widget.BaseWidget
 	minW, minH float32
 	inner      fyne.CanvasObject
 }
 
 func newMinSizeContainer(inner fyne.CanvasObject, w, h float32) *minSizeContainer {
-	return &minSizeContainer{inner: inner, minW: w, minH: h}
+	c := &minSizeContainer{inner: inner, minW: w, minH: h}
+	c.ExtendBaseWidget(c)
+	return c
 }
 
-func (c *minSizeContainer) MinSize() fyne.Size {
-	s := c.inner.MinSize()
-	return fyne.NewSize(maxFloat(s.Width, c.minW), maxFloat(s.Height, c.minH))
+func (c *minSizeContainer) CreateRenderer() fyne.WidgetRenderer {
+	return &minSizeRenderer{inner: c.inner, minW: c.minW, minH: c.minH}
 }
 
-func (c *minSizeContainer) Resize(size fyne.Size) {
-	c.inner.Resize(fyne.NewSize(maxFloat(size.Width, c.minW), maxFloat(size.Height, c.minH)))
+// minSizeRenderer 把内部对象撑到不小于最小尺寸。
+type minSizeRenderer struct {
+	inner      fyne.CanvasObject
+	minW, minH float32
 }
 
-func (c *minSizeContainer) Move(pos fyne.Position)  { c.inner.Move(pos) }
-func (c *minSizeContainer) Position() fyne.Position { return c.inner.Position() }
-func (c *minSizeContainer) Size() fyne.Size         { return c.inner.Size() }
-func (c *minSizeContainer) Show()                   { c.inner.Show() }
-func (c *minSizeContainer) Hide()                   { c.inner.Hide() }
-func (c *minSizeContainer) Visible() bool           { return c.inner.Visible() }
-func (c *minSizeContainer) Refresh()                { c.inner.Refresh() }
+func (r *minSizeRenderer) Layout(size fyne.Size) {
+	r.inner.Resize(fyne.NewSize(maxFloat(size.Width, r.minW), maxFloat(size.Height, r.minH)))
+}
+
+func (r *minSizeRenderer) MinSize() fyne.Size {
+	s := r.inner.MinSize()
+	return fyne.NewSize(maxFloat(s.Width, r.minW), maxFloat(s.Height, r.minH))
+}
+
+func (r *minSizeRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.inner} }
+
+func (r *minSizeRenderer) Refresh() { r.inner.Refresh() }
+
+func (r *minSizeRenderer) Destroy() {}
 
 func maxFloat(a, b float32) float32 {
 	if a > b {

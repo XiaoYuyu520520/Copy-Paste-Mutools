@@ -36,6 +36,10 @@ type TabEditor struct {
 	// 未聚焦过任何区块时为 0。
 	activeRowIdx int
 
+	// closed 在窗口关闭（FlushSave）时置位：此后再回到 UI 线程的
+	// 合并回调一律丢弃，避免访问已销毁的控件。
+	closed bool
+
 	preview     *previewEntry
 	previewCard *cardPanel
 	rowsScroll  *container.Scroll
@@ -190,7 +194,7 @@ func (e *TabEditor) View() fyne.CanvasObject {
 
 	split := container.NewBorder(
 		top,
-		previewPanel,
+		WrapExactHeight(previewPanel, previewHeight),
 		nil,
 		nil,
 		e.rowsScroll,
@@ -376,6 +380,13 @@ func (e *TabEditor) previewPanel() fyne.CanvasObject {
 	e.previewCard = panel
 	return panel.root
 }
+
+// previewHeight 是预览卡片的固定总高度：
+// 标题 + 固定高度预览框 + 分隔线 + 按钮栏 + 上下内边距。
+//
+// Border 的 bottom 区域会被拉伸到「剩余空间」的一整块，
+// 不固定高度时卡片会盖住编辑区（截图里表现为预览盖住下面的区块）。
+const previewHeight float32 = previewMinSize + 170
 
 // Recolor refreshes theme-dependent card layers without rebuilding the editor.
 func (e *TabEditor) Recolor() {
@@ -816,10 +827,10 @@ func (e *TabEditor) scheduleMerge() {
 		text := data.MergeTab(snapshot)
 		fyne.Do(func() {
 			e.mergeMu.Lock()
-			stale := e.mergeSeq != seq
+			stale := e.mergeSeq != seq || e.closed
 			e.mergeMu.Unlock()
 			if stale {
-				// 已经有更新的合并请求在路上，本次结果作废。
+				// 已经有更新的合并请求在路上，或窗口已关闭：本次结果作废。
 				return
 			}
 			e.prevOutput = text
@@ -871,16 +882,35 @@ func (e *TabEditor) ForceMerge() {
 }
 
 // FlushSave 立即落盘。
+//
+// 同时停掉在途的合并去抖定时器：窗口关闭后它触发的回调仍会访问控件
+// （updateCount -> Label.SetText），在 UI 线程已结束的情况下会 panic。
 func (e *TabEditor) FlushSave() {
 	if e.saveTimer != nil {
 		e.saveTimer.Stop()
 		e.saveTimer = nil
 	}
+	e.cancelMerge()
 	if e.OnDirtyNow != nil {
 		e.OnDirtyNow()
 	} else if e.OnDirty != nil {
 		e.OnDirty()
 	}
+}
+
+// cancelMerge 停掉合并去抖定时器，并作废在途回调。
+//
+// timer.Stop() 不能阻止「已经触发、正在等 UI 线程」的回调，
+// 因此同时把 closed 置位、版本号自增，回调回来时会被丢弃。
+func (e *TabEditor) cancelMerge() {
+	if e.mergeTimer != nil {
+		e.mergeTimer.Stop()
+		e.mergeTimer = nil
+	}
+	e.mergeMu.Lock()
+	e.closed = true
+	e.mergeSeq++
+	e.mergeMu.Unlock()
 }
 
 // Clear 清空所有文本输入（保留区块结构）。
