@@ -216,6 +216,41 @@ func TestDuplicateTab_CopiesContent(t *testing.T) {
 	}
 }
 
+// TestCloseTabsExcept_KeepsRightTab 关闭其他标签时，保留的应该是被右键的那个，
+// 即使它前面还有别的标签（删除前面的标签会让它的下标左移）。
+func TestCloseTabsExcept_KeepsRightTab(t *testing.T) {
+	cfg := data.DefaultConfig()
+	cfg.Tabs = []data.TabConfig{
+		data.ResizeTab(data.TabConfig{}, 1),
+		data.ResizeTab(data.TabConfig{}, 1),
+		data.ResizeTab(data.TabConfig{}, 1),
+	}
+	cfg.Tabs[0].Name = "甲"
+	cfg.Tabs[1].Name = "乙"
+	cfg.Tabs[2].Name = "丙"
+
+	a := test.NewApp()
+	win := NewMainWindow(a, &cfg)
+	defer win.Close()
+
+	m := latestMainApp
+	// 保留第 2 个（丙）：它前面有甲、乙两个标签会被删掉
+	m.closeTabsExcept(2)
+
+	if len(m.bundles) != 1 {
+		t.Fatalf("标签数 = %d，期望 1", len(m.bundles))
+	}
+	if m.cfg.Tabs[0].Name != "丙" {
+		t.Errorf("保留的标签 = %q，期望 丙", m.cfg.Tabs[0].Name)
+	}
+	if got := m.bundles[0].editor.Title; got != "丙" {
+		t.Errorf("界面上的标签 = %q，期望 丙", got)
+	}
+	if m.tabBar.Selected() != 0 {
+		t.Errorf("标签栏选中下标 = %d，期望 0", m.tabBar.Selected())
+	}
+}
+
 // findMenuItem 按标题查找菜单项。
 func findMenuItem(items []*fyne.MenuItem, label string) *fyne.MenuItem {
 	for _, it := range items {
