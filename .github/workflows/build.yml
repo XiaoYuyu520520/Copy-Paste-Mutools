@@ -80,6 +80,10 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
 
+      # 内联脚本语法检查：比打开浏览器快得多，失败时能直接定位到文件。
+      - name: JS syntax check
+        run: python tests/web/check_js_syntax.py
+
       - name: Run web smoke tests
         run: python tests/web/test_tools_smoke.py
 

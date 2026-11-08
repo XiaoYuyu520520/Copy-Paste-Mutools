@@ -6,6 +6,7 @@
 <title>Markdown 实时预览 · 在线工具</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="common.css">
+<script src="theme.js"></script>
 <link rel="stylesheet" href="assets/github-markdown-light.min.css" id="mdLight">
 <link rel="stylesheet" href="assets/github-markdown-dark.min.css" id="mdDark" disabled>
 <link rel="stylesheet" href="assets/github.min.css" id="hlLight">
@@ -92,12 +93,12 @@ body[data-view="split"] #preview{border-top:0;flex:1}
   <nav class="top">
     <span class="brand">提示词复合工具箱 · 在线工具</span>
     <a href="index.html">工具总览</a>
-    <a href="../index.html">文档首页</a>
     <a href="base64.html">Base64</a>
     <a href="qrcode.html">二维码</a>
     <a href="codec.html">编解码检测</a>
     <a href="markdown.html" class="active">Markdown</a>
     <a href="mapview.html">激光地图</a>
+    <a href="../index.html">文档首页</a>
   </nav>
 
   <h1>Markdown 实时预览</h1>
@@ -192,7 +193,7 @@ body[data-view="split"] #preview{border-top:0;flex:1}
   function applyTheme(theme, persist){
     state.theme = theme === 'dark' ? 'dark' : 'light';
     var dark = state.theme === 'dark';
-    document.documentElement.setAttribute('data-theme', state.theme);
+    // data-theme 由站点主题（theme.js）统一写入，这里只管渲染区样式表。
     els.mdLight.disabled = dark;
     els.mdDark.disabled = !dark;
     els.hlLight.disabled = dark;
@@ -201,7 +202,7 @@ body[data-view="split"] #preview{border-top:0;flex:1}
     if (persist) lsSet(KEY.theme, state.theme);
     if (els.src.value) render();
   }
-  function toggleTheme(){ applyTheme(state.theme === 'dark' ? 'light' : 'dark', true); }
+  function toggleTheme(){ window.SiteTheme.toggle(); }
 
   function applyView(view, persist){
     state.view = view === 'split' ? 'split' : 'render';
@@ -383,11 +384,14 @@ body[data-view="split"] #preview{border-top:0;flex:1}
     else if (k === 'o') { e.preventDefault(); els.file.click(); }
   });
 
-  var savedTheme = lsGet(KEY.theme);
-  if (!savedTheme) {
-    savedTheme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  // 主题统一由站点 theme.js 管理（跟随系统 / 手动切换记忆），
+  // 本页只负责把渲染区样式表切到对应主题。
+  if (window.SiteTheme) {
+    window.SiteTheme.onChange(function (t) { applyTheme(t, false); });
+    applyTheme(window.SiteTheme.get(), false);
+  } else {
+    applyTheme('light', false);
   }
-  applyTheme(savedTheme, false);
   applyView(lsGet(KEY.view) || 'render', false);
   showEmpty();
 })();

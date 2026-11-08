@@ -5,18 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Base64 编解码 · 在线工具</title>
 <link rel="stylesheet" href="common.css">
+<script src="theme.js"></script>
+<style>
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 50;
+    background: rgba(58,150,255,.14); border: 3px dashed var(--accent); pointer-events: none; }
+  #drop.on { display: flex; }
+  #drop .hint { background: var(--accent); color: var(--accent-fg); padding: 10px 22px; border-radius: 999px; font-weight: 700; }
+  #meters { margin: -6px 0 12px; }
+  #input, #output { min-height: 200px; }
+</style>
 </head>
 <body>
 <div class="wrap">
   <nav class="top">
     <span class="brand">提示词复合工具箱 · 在线工具</span>
     <a href="index.html">工具总览</a>
-    <a href="../index.html">文档首页</a>
     <a href="base64.html" class="active">Base64</a>
     <a href="qrcode.html">二维码</a>
     <a href="codec.html">编解码检测</a>
     <a href="markdown.html">Markdown</a>
     <a href="mapview.html">激光地图</a>
+    <a href="../index.html">文档首页</a>
   </nav>
 
   <h1>Base64 编解码</h1>
@@ -35,12 +44,13 @@
     </div>
 
     <div class="toolbar">
-      <button id="btnEncode">编码 →</button>
-      <button id="btnDecode">← 解码</button>
-      <button class="ghost" id="btnSwap">交换</button>
-      <button class="ghost" id="btnCopy">复制输出</button>
-      <button class="ghost" id="btnClear">清空</button>
+      <button id="btnEncode">编码 →<kbd>Ctrl ↵</kbd></button>
+      <button id="btnDecode">← 解码<kbd>Ctrl ⇧ ↵</kbd></button>
+      <button class="ghost" id="btnSwap" title="把输出换回输入（Alt+S）">交换</button>
+      <button class="ghost" id="btnCopy" title="复制输出（Ctrl+Shift+C）">复制输出</button>
+      <button class="ghost" id="btnClear" title="清空输入与输出（Esc）">清空</button>
     </div>
+    <div class="meters" id="meters" aria-live="off"></div>
 
     <div class="row" style="margin-bottom:14px">
       <label class="col hint"><input type="checkbox" id="optUrlSafe"> URL-safe（<code>+ /</code> → <code>- _</code>，去掉 <code>=</code>）</label>
@@ -50,7 +60,7 @@
 
     <div class="row">
       <div class="col">
-        <label class="field" for="file">文件转 Base64（可选，适合小文件）</label>
+        <label class="field" for="file">文件转 Base64（可选，适合小文件；也可以直接把文件拖到页面里）</label>
         <input type="file" id="file" style="color:var(--muted)">
       </div>
       <div class="col">
@@ -67,12 +77,15 @@
       <li>编码：文本先按 UTF-8 转字节，再做 Base64，因此中文/emoji 不会乱码。</li>
       <li>解码：先按 Base64 还原字节，再按 UTF-8 解码；二进制内容会显示为替换字符。</li>
       <li>URL-safe（RFC 4648 §5）常用于 JWT、URL 参数。</li>
+      <li>输入时会自动转换（编码失败则尝试按 Base64 解码），也可以用右侧按钮手动指定方向。</li>
       <li>大文件建议使用命令行：<code>base64 -w0 file.bin</code>。</li>
     </ul>
   </div>
 
   <footer>Made with ❤️ by <a href="https://github.com/XiaoYuyu520520">XiaoYuyu520520</a> · MIT License</footer>
 </div>
+
+<div id="drop"><div class="hint">松手即转为 Base64</div></div>
 
 <script src="common.js"></script>
 <script>
@@ -82,6 +95,8 @@ const output = $("output");
 const urlSafe = $("optUrlSafe");
 const wrap = $("optWrap");
 const ignoreWs = $("optIgnoreWs");
+const meters = $("meters");
+const drop = $("drop");
 
 const B64_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -120,6 +135,11 @@ function chunkLines(s, width) {
   return out.join("\n");
 }
 
+function showMeters(text) {
+  const st = textStats(text);
+  renderMeters(meters, { 行: st.lines, 字符: st.chars, 字节: st.bytes });
+}
+
 function encode() {
   const text = input.value;
   try {
@@ -128,9 +148,12 @@ function encode() {
     if (urlSafe.checked) b64 = toUrlSafe(b64);
     if (wrap.checked && !urlSafe.checked) b64 = chunkLines(b64, 76);
     output.value = b64;
+    showMeters(b64);
     setStatus("编码完成 · " + bytes.length + " 字节 → " + output.value.length + " 字符", "ok");
+    return true;
   } catch (err) {
     setStatus("编码失败：" + err.message, "err");
+    return false;
   }
 }
 
@@ -138,31 +161,68 @@ function decode() {
   try {
     const bytes = base64ToBytes(input.value, ignoreWs.checked);
     output.value = new TextDecoder("utf-8").decode(bytes);
+    showMeters(output.value);
     setStatus("解码完成 · " + bytes.length + " 字节", "ok");
+    return true;
   } catch (err) {
     setStatus("解码失败：" + err.message, "err");
+    return false;
   }
 }
 
-$("btnEncode").addEventListener("click", encode);
-$("btnDecode").addEventListener("click", decode);
+/* 输入看起来像 Base64 就解码，否则编码。 */
+function looksLikeBase64(text) {
+  const compact = text.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  if (!compact) return false;
+  return /^[A-Za-z0-9+/]+$/.test(compact) && compact.length % 4 !== 1;
+}
+
+/* 自动转换：优先沿用上一次的手动方向；没有记录时按内容猜。 */
+let lastDir = "auto";
+function autoConvert() {
+  const text = input.value;
+  if (!text) {
+    output.value = "";
+    showMeters("");
+    setStatus("");
+    return;
+  }
+  if (lastDir === "encode") return encode();
+  if (lastDir === "decode") return decode();
+  // 自动方向：先按输入猜测；解码失败回退为编码。
+  if (looksLikeBase64(text)) {
+    if (decode()) return;
+  }
+  encode();
+}
+
+$("btnEncode").addEventListener("click", () => { lastDir = "encode"; encode(); });
+$("btnDecode").addEventListener("click", () => { lastDir = "decode"; decode(); });
 $("btnSwap").addEventListener("click", () => {
   const a = input.value;
   input.value = output.value;
   output.value = a;
+  showMeters(output.value);
   setStatus("已交换输入与输出");
 });
-$("btnCopy").addEventListener("click", () => {
-  if (!output.value) return setStatus("输出为空", "err");
-  copyText(output.value);
-});
+$("btnCopy").addEventListener("click", (e) => copyWithFeedback(e.currentTarget, output.value));
 $("btnClear").addEventListener("click", () => {
   input.value = "";
   output.value = "";
+  lastDir = "auto";
+  showMeters("");
   setStatus("");
+  input.focus();
 });
-$("btnFileToB64").addEventListener("click", () => {
+$("btnFileToB64").addEventListener("click", () => convertFile($("file").files[0]));
+
+$("file").addEventListener("change", () => {
   const f = $("file").files[0];
+  $("file").value = "";
+  convertFile(f);
+});
+
+function convertFile(f) {
   if (!f) return setStatus("请先选择一个文件", "err");
   const reader = new FileReader();
   reader.onload = () => {
@@ -171,18 +231,80 @@ $("btnFileToB64").addEventListener("click", () => {
     if (urlSafe.checked) b64 = toUrlSafe(b64);
     if (wrap.checked && !urlSafe.checked) b64 = chunkLines(b64, 76);
     output.value = b64;
+    showMeters(b64);
     setStatus("文件已编码：" + f.name + " · " + bytes.length + " 字节", "ok");
   };
   reader.onerror = () => setStatus("读取文件失败", "err");
   reader.readAsArrayBuffer(f);
-});
+}
 
-input.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+/* 即输即出：200ms 去抖。 */
+let autoTimer = null;
+input.addEventListener("input", () => {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(autoConvert, 200);
+});
+[urlSafe, wrap, ignoreWs].forEach((cb) =>
+  cb.addEventListener("change", () => {
+    if (lastDir === "decode") decode();
+    else if (input.value) encode();
+  })
+);
+
+/* 键盘快捷键：
+ *   Ctrl+Enter        编码
+ *   Ctrl+Shift+Enter  解码
+ *   Alt+S             交换
+ *   Ctrl+Shift+C      复制输出
+ *   Esc               清空
+ */
+window.addEventListener("keydown", (e) => {
+  const k = (e.key || "").toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && k === "enter") {
     e.preventDefault();
+    lastDir = "encode";
     encode();
+  } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "enter") {
+    e.preventDefault();
+    lastDir = "decode";
+    decode();
+  } else if (e.altKey && k === "s") {
+    e.preventDefault();
+    $("btnSwap").click();
+  } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "c") {
+    e.preventDefault();
+    $("btnCopy").click();
+  } else if (e.key === "Escape") {
+    $("btnClear").click();
   }
 });
+
+/* 拖拽文件到页面任意位置 → 转 Base64 */
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragDepth++;
+  drop.classList.add("on");
+});
+window.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) drop.classList.remove("on");
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  drop.classList.remove("on");
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) convertFile(f);
+});
+
+/* 页面加载后聚焦输入框，键盘用户直接开打。 */
+input.focus();
+
 </script>
 </body>
 </html>

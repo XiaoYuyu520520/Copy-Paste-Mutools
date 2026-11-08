@@ -410,6 +410,140 @@ def test_codec_detect_runs_and_reports():
         browser.close()
 
 
+
+# ---------- 主题 / 搜索 / 即时转换 ----------
+
+def _bg_luma(page) -> float:
+    """读取 body 背景色亮度（0~255）：亮色主题应显著高于深色主题。"""
+    rgb = page.evaluate("() => getComputedStyle(document.body).backgroundColor")
+    m = rgb.replace("rgba(", "").replace("rgb(", "").replace(")", "").split(",")
+    r, g, b = (float(x) for x in m[:3])
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def test_theme_toggle_persists_across_pages():
+    """主题切换：默认跟随系统，手动切换后整个工具站在其它页面也保持该主题。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        ctx = browser.new_context(color_scheme="dark")
+        page = ctx.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("index.html"))
+        page.wait_for_timeout(250)
+
+        # 默认跟随系统（dark）
+        assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "dark"
+        dark_luma = _bg_luma(page)
+
+        # 顶栏应有主题按钮；点击切到亮色
+        btn = page.locator("nav.top .theme-toggle")
+        expect(btn).to_have_count(1)
+        btn.click()
+        page.wait_for_timeout(150)
+        assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
+        light_luma = _bg_luma(page)
+        assert light_luma > dark_luma + 80, f"亮色背景亮度未提升: {dark_luma} -> {light_luma}"
+
+        # 换到另一个页面，主题应保持（localStorage 记忆）
+        page.goto(_page_url("base64.html"))
+        page.wait_for_timeout(200)
+        assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
+        assert _bg_luma(page) > 200, "Base64 页未应用亮色主题"
+
+        # Ctrl+Shift+D 切回夜间
+        page.keyboard.press("Control+Shift+D")
+        page.wait_for_timeout(150)
+        assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "dark"
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+def test_index_tool_search_filters_and_opens():
+    """总览页搜索：输入关键词过滤卡片，Enter 打开第一个结果，/ 聚焦搜索框。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("index.html"))
+        page.wait_for_timeout(250)
+
+        total = page.locator("#toolList .tool-card").count()
+        assert total == 5, f"工具卡片数 = {total}"
+
+        # 按分类标签搜索：只剩二维码
+        page.fill("#toolSearch", "二维码")
+        page.wait_for_timeout(100)
+        visible = page.locator("#toolList .tool-card:visible")
+        assert visible.count() == 1, f"过滤后可见卡片 = {visible.count()}"
+        assert "qrcode" in (visible.first.get_attribute("href") or "")
+
+        # 用场景词（不在标题里）也能搜到
+        page.fill("#toolSearch", "ros")
+        page.wait_for_timeout(100)
+        visible = page.locator("#toolList .tool-card:visible")
+        assert visible.count() == 1 and "mapview" in (visible.first.get_attribute("href") or "")
+
+        # 无结果提示
+        page.fill("#toolSearch", "不存在的工具xyz")
+        page.wait_for_timeout(100)
+        expect(page.locator("#noResult")).to_be_visible()
+
+        # Esc 清空
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(100)
+        assert page.locator("#toolList .tool-card:visible").count() == 5
+
+        # / 聚焦搜索框
+        page.click("h1")
+        page.keyboard.press("/")
+        assert page.evaluate("() => document.activeElement && document.activeElement.id") == "toolSearch"
+
+        # 方向键 + Enter 打开
+        page.fill("#toolSearch", "markdown")
+        page.wait_for_timeout(100)
+        page.keyboard.press("ArrowDown")
+        page.keyboard.press("Enter")
+        page.wait_for_url("**/markdown.html")
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
+def test_base64_live_convert_and_meters():
+    """Base64：输入即自动转换、方向自动识别、字节计量、Ctrl+Shift+Enter 解码。"""
+    with sync_playwright() as p:
+        browser = _launch(p)
+        page = browser.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(_page_url("base64.html"))
+        page.wait_for_timeout(200)
+
+        # 中文输入 → 自动编码
+        page.fill("#input", "你好")
+        page.wait_for_timeout(400)
+        assert page.input_value("#output") == "5L2g5aW9", page.input_value("#output")
+        meters = page.text_content("#meters") or ""
+        assert "字节" in meters and "字节 8" in meters, f"计量未显示: {meters}"
+
+        # 粘贴 Base64 → 自动识别为解码
+        page.fill("#input", "5L2g5aW9")
+        page.wait_for_timeout(400)
+        assert page.input_value("#output") == "你好", page.input_value("#output")
+
+        # 手动指定解码方向后，即使内容像普通文本也按 Base64 解码并报错
+        page.fill("#input", "这不是 base64!!!")
+        page.wait_for_timeout(400)
+        page.keyboard.press("Control+Shift+Enter")
+        page.wait_for_timeout(200)
+        assert "解码失败" in (page.text_content("#status") or "")
+
+        assert not errors, f"页面存在 JS 错误: {errors}"
+        browser.close()
+
+
 # ---------- 通用导航 ----------
 
 def test_tool_pages_load_with_common_nav():
@@ -442,6 +576,9 @@ ALL_TESTS = [
     test_markdown_render_split_and_theme,
     test_markdown_open_file,
     test_codec_detect_runs_and_reports,
+    test_theme_toggle_persists_across_pages,
+    test_index_tool_search_filters_and_opens,
+    test_base64_live_convert_and_meters,
     test_tool_pages_load_with_common_nav,
 ]
 

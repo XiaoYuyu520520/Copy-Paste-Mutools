@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>二维码生成器 · 在线工具</title>
 <link rel="stylesheet" href="common.css">
+<script src="theme.js"></script>
 <style>
   .qr-layout { display: grid; gap: 22px; grid-template-columns: minmax(260px, 1fr) minmax(240px, 320px); align-items: start; }
   @media (max-width: 760px) { .qr-layout { grid-template-columns: 1fr; } }
@@ -26,12 +27,12 @@
   <nav class="top">
     <span class="brand">提示词复合工具箱 · 在线工具</span>
     <a href="index.html">工具总览</a>
-    <a href="../index.html">文档首页</a>
     <a href="base64.html">Base64</a>
     <a href="qrcode.html" class="active">二维码</a>
     <a href="codec.html">编解码检测</a>
     <a href="markdown.html">Markdown</a>
     <a href="mapview.html">激光地图</a>
+    <a href="../index.html">文档首页</a>
   </nav>
 
   <h1>二维码生成器</h1>
@@ -80,8 +81,8 @@
         </div>
 
         <div class="toolbar">
-          <button id="btnGen">生成二维码</button>
-          <button class="ghost" id="btnPng">下载 PNG</button>
+          <button id="btnGen">生成二维码<kbd>Ctrl ↵</kbd></button>
+          <button class="ghost" id="btnPng" title="下载 PNG（Ctrl+S）">下载 PNG</button>
           <button class="ghost" id="btnSvg">下载 SVG</button>
         </div>
         <div class="status" id="status"></div>
@@ -209,6 +210,19 @@ $("content").addEventListener("input", () => {
 ["ecl", "margin", "fg", "bg"].forEach((id) => $(id).addEventListener("change", generate));
 
 generate();
+
+/* 快捷键：Ctrl+Enter 重新生成，Ctrl+S 下载 PNG。 */
+window.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const k = (e.key || "").toLowerCase();
+  if (k === "enter") {
+    e.preventDefault();
+    generate();
+  } else if (k === "s") {
+    e.preventDefault();
+    $("btnPng").click();
+  }
+});
 </script>
 </body>
 </html>

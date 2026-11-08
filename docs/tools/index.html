@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在线工具总览 · 提示词复合工具箱</title>
 <link rel="stylesheet" href="common.css">
+<script src="theme.js"></script>
 <style>
   .intro {
     background: linear-gradient(135deg, rgba(58,150,255,.16), rgba(58,150,255,.04));
@@ -57,10 +58,6 @@
   .tool-card h3 { margin: 2px 0 0; font-size: 18px; }
   .tool-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; flex: 1; }
   .tool-card .go { color: var(--accent); font-size: 13px; font-weight: 600; }
-  .scenes { margin-top: 8px; }
-  .scenes td:first-child { color: var(--text); }
-  .scenes td:last-child { color: var(--muted); }
-  .scenes a { font-weight: 600; }
   .offline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
   .offline h2 { margin: 0 0 6px; font-size: 18px; }
   .offline .acts { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -76,6 +73,14 @@
   .ghbtn:hover { text-decoration: none; filter: brightness(1.1); }
   .ghbtn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .ghbtn.ghost:hover { border-color: var(--accent); color: var(--accent); filter: none; }
+
+  .searchbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+  .searchbar input { flex: 1 1 260px; font-family: inherit; font-size: 15px; }
+  .tool-card.active, .tool-card:focus-visible {
+    border-color: var(--accent); background: var(--panel-2); transform: translateY(-3px);
+    text-decoration: none;
+  }
+  .tool-card.active::before { opacity: 1; }
 </style>
 </head>
 <body>
@@ -110,36 +115,42 @@
     </div>
   </div>
 
-  <div class="tools">
-    <a class="tool-card" href="base64.html">
+  <div class="searchbar">
+    <input type="text" id="toolSearch" placeholder="搜索工具或场景，例如「二维码」「base64」「地图」…" autocomplete="off" spellcheck="false" aria-label="搜索工具">
+    <span class="hint" id="searchHint">按 / 快速聚焦 · ↑↓ 选择 · Enter 打开</span>
+  </div>
+  <p class="hint" id="noResult" style="display:none">没有匹配的工具，换个关键词试试。</p>
+
+  <div class="tools" id="toolList">
+    <a class="tool-card" href="base64.html" data-keywords="base64 编码 解码 转换 utf-8 中文 url-safe 文件 二进制 图片 jwk">
       <span class="tag">编码 / 转换</span>
       <h3>Base64 编解码</h3>
       <p>UTF-8 中文不乱码，支持 URL-safe、76 字符换行、文件转 Base64。</p>
       <span class="go">打开工具 →</span>
     </a>
 
-    <a class="tool-card" href="qrcode.html">
+    <a class="tool-card" href="qrcode.html" data-keywords="二维码 qr 生成 网址 url wifi 颜色 纠错 png svg 下载">
       <span class="tag">图像 / 生成</span>
       <h3>二维码生成器</h3>
       <p>文本 / 网址即时生成，支持 L/M/Q/H 纠错、静默边距、前景背景色，下载 PNG / SVG。</p>
       <span class="go">打开工具 →</span>
     </a>
 
-    <a class="tool-card" href="codec.html">
+    <a class="tool-card" href="codec.html" data-keywords="编解码 检测 h264 hevc av1 vp9 aac opus webrtc 硬件 编码 解码 浏览器 支持">
       <span class="tag">媒体 / 诊断</span>
       <h3>浏览器编解码检测</h3>
       <p>检测 H.264 / HEVC / AV1 / VP9 与 AAC / Opus 等支持情况，含 WebRTC 实时通信与硬件编码迹象。</p>
       <span class="go">打开工具 →</span>
     </a>
 
-    <a class="tool-card" href="markdown.html">
+    <a class="tool-card" href="markdown.html" data-keywords="markdown md 预览 渲染 代码高亮 主题 打印 pdf readme 写作">
       <span class="tag">文档 / 预览</span>
       <h3>Markdown 实时预览</h3>
       <p>GitHub 风格渲染、代码高亮与复制按钮，支持亮暗主题、左右对照、打印导出。</p>
       <span class="go">打开工具 →</span>
     </a>
 
-    <a class="tool-card" href="mapview.html">
+    <a class="tool-card" href="mapview.html" data-keywords="激光 地图 pgm yaml slam ros 机器人 测量 擦除 阈值 栅格">
       <span class="tag">机器人 / 地图</span>
       <h3>2D 激光 SLAM 地图</h3>
       <p>打开 .pgm + .yaml：比例尺、测距、橡皮、导出；仅 YAML 时作为编辑器，仅 PGM 支持像素测量。</p>
@@ -147,22 +158,72 @@
     </a>
   </div>
 
-  <div class="card scenes" style="margin-top:26px">
-    <h2 style="margin-top:0">按场景快速跳转</h2>
-    <div class="table-wrap">
-      <table>
-        <tbody>
-          <tr><td>把一段中文编码成 Base64，或解回去</td><td><a href="base64.html">Base64 编解码 →</a></td></tr>
-          <tr><td>把网址 / Wi-Fi 信息生成二维码并下载</td><td><a href="qrcode.html">二维码生成器 →</a></td></tr>
-          <tr><td>看看这台设备能不能硬解 / 硬编 H.264、VP9、AV1</td><td><a href="codec.html">编解码检测 →</a></td></tr>
-          <tr><td>快速预览 README / 写 Markdown 并看效果</td><td><a href="markdown.html">Markdown 预览 →</a></td></tr>
-          <tr><td>查看 / 测量 / 擦除 ROS 激光地图，或编辑地图 YAML</td><td><a href="mapview.html">激光地图 →</a></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
   <footer>Made with ❤️ by <a href="https://github.com/XiaoYuyu520520">XiaoYuyu520520</a> · MIT License</footer>
 </div>
+
+<script src="common.js"></script>
+<script>
+(function () {
+  const input = document.getElementById("toolSearch");
+  const list = document.getElementById("toolList");
+  const noResult = document.getElementById("noResult");
+  const cards = Array.from(list.querySelectorAll(".tool-card"));
+  let cursor = -1;
+
+  function text(t) { return (t || "").toLowerCase(); }
+
+  function filter() {
+    const q = text(input.value.trim());
+    let shown = 0;
+    cards.forEach((c) => {
+      const hay = text(c.textContent) + " " + text(c.dataset.keywords);
+      const hit = !q || hay.includes(q);
+      c.style.display = hit ? "" : "none";
+      if (hit) shown++;
+    });
+    noResult.style.display = shown ? "none" : "";
+    cursor = -1;
+    mark();
+  }
+
+  function visible() { return cards.filter((c) => c.style.display !== "none"); }
+
+  function mark() {
+    cards.forEach((c, i) => c.classList.toggle("active", i === cursor));
+  }
+
+  function move(delta) {
+    const vis = visible();
+    if (!vis.length) return;
+    const idx = vis.indexOf(cards[cursor]);
+    const next = idx < 0 ? (delta > 0 ? 0 : vis.length - 1) : (idx + delta + vis.length) % vis.length;
+    cursor = cards.indexOf(vis[next]);
+    mark();
+    vis[next].scrollIntoView({ block: "nearest" });
+  }
+
+  input.addEventListener("input", filter);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+    else if (e.key === "Enter") {
+      const target = cursor >= 0 ? cards[cursor] : visible()[0];
+      if (target) { e.preventDefault(); location.href = target.getAttribute("href"); }
+    } else if (e.key === "Escape") {
+      input.value = ""; filter(); input.blur();
+    }
+  });
+
+  // 按 / 聚焦搜索框（不在输入框里的时候）
+  window.addEventListener("keydown", (e) => {
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(tag)) {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+})();
+</script>
 </body>
 </html>
