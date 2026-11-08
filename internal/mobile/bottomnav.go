@@ -111,6 +111,7 @@ type bottomNavEntry struct {
 func newBottomNav(entries []bottomNavEntry, onSelect func(int)) *bottomNav {
 	n := &bottomNav{}
 	pal := mobilePalette()
+	roots := make([]fyne.CanvasObject, 0, len(entries))
 
 	for i, e := range entries {
 		idx := i
@@ -131,20 +132,33 @@ func newBottomNav(entries []bottomNavEntry, onSelect func(int)) *bottomNav {
 		})
 		b.root = container.NewStack(inner, tap)
 		n.items = append(n.items, b)
+		roots = append(roots, b.root)
 	}
 
-	// 等宽网格：不论屏幕多宽，各入口始终平分整行。
-	w := float32(400) / float32(len(entries))
-	if len(entries) == 0 {
-		w = 0
-	}
-	row := container.NewGridWrap(fyne.NewSize(w, bottomNavHeight))
-	for _, b := range n.items {
-		row.Add(b.root)
-	}
-	n.root = row
+	// 等宽平分整行：用自定义布局按实际宽度分配，而不是写死 400/5。
+	n.root = container.New(&navRowLayout{}, roots...)
 	n.applyStyle(0)
 	return n
+}
+
+// navRowLayout 把子对象等宽平铺在一行里，高度固定为 bottomNavHeight。
+//
+// 不用 GridWrap：它的列宽固定，屏幕一变宽/变窄就会出现多余列或被挤到下一行。
+type navRowLayout struct{}
+
+func (*navRowLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(float32(len(objects))*48, bottomNavHeight)
+}
+
+func (*navRowLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	if len(objects) == 0 {
+		return
+	}
+	w := size.Width / float32(len(objects))
+	for i, o := range objects {
+		o.Move(fyne.NewPos(float32(i)*w, 0))
+		o.Resize(fyne.NewSize(w, size.Height))
+	}
 }
 
 // View 返回底栏根容器。

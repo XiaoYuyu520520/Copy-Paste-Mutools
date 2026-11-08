@@ -156,7 +156,10 @@ func newEditorPage(s *store, win fyne.Window) *editorPage {
 
 	p.root = container.NewBorder(
 		container.NewVBox(top, toolbar),
-		bottom, nil, nil, p.scroll,
+		bottom, nil, nil,
+		// Scroll 不裁剪内容：不加 Clip 时，滚出视口的区块会画到下方
+		// 「合并预览」和底部导航上。
+		container.NewClip(p.scroll),
 	)
 	p.refreshTabs()
 	return p
