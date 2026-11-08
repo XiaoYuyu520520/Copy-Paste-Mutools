@@ -18,6 +18,7 @@ import (
 // editorPage 是提示词 + 语句的合并编辑器（手机端）。
 type editorPage struct {
 	store   *store
+	win     fyne.Window
 	root    fyne.CanvasObject
 	rowBox  *fyne.Container
 	scroll  *container.Scroll
@@ -40,8 +41,8 @@ type mobileEditorRow struct {
 	root fyne.CanvasObject
 }
 
-func newEditorPage(s *store) *editorPage {
-	p := &editorPage{store: s}
+func newEditorPage(s *store, win fyne.Window) *editorPage {
+	p := &editorPage{store: s, win: win}
 
 	p.select1 = widget.NewSelect(nil, func(string) { p.onTabChanged() })
 	addBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), p.addTab)
@@ -99,18 +100,24 @@ func newEditorPage(s *store) *editorPage {
 		p.store.SaveDebounced()
 		p.updatePreview()
 	}
-	p.sepWrap = container.NewVBox(widget.NewLabel("自定义分隔符"), p.sepEntry)
+	p.sepWrap = container.NewVBox(
+		widget.NewLabelWithStyle("自定义分隔符", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		p.sepEntry,
+	)
 	p.sepWrap.Hide()
 
 	addBlockBtn := widget.NewButtonWithIcon("新增区块", theme.ContentAddIcon(), p.addBlock)
-	tplBtn := widget.NewButtonWithIcon("模板", theme.DocumentIcon(), p.showTemplates)
+	addBlockBtn.Importance = widget.MediumImportance
+	tplBtn := widget.NewButtonWithIcon("", theme.DocumentIcon(), p.showTemplates)
+	settingsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), p.showPageSettings)
 
-	toolbar := container.NewVBox(
-		container.NewBorder(nil, nil, widget.NewLabel("标签名"), nil, p.nameEntry),
-		container.NewBorder(nil, nil, widget.NewLabel("拼接模式"), nil, p.modeSel),
-		p.sepWrap,
-		container.NewHBox(addBlockBtn, tplBtn),
-		widget.NewSeparator(),
+	// 顶部只保留「当前标签切换 + 两个主操作 + 设置」：
+	// 标签名 / 拼接模式 / 分隔符是低频设置，收进设置面板，
+	// 把纵向空间留给内容输入（手机上最容易不够用的就是这块）。
+	toolbar := container.NewBorder(nil, nil,
+		nil,
+		container.NewHBox(tplBtn, settingsBtn),
+		addBlockBtn,
 	)
 
 	p.rowBox = container.NewVBox()
@@ -244,26 +251,16 @@ func (p *editorPage) makeRow(i int, tab data.TabConfig) *mobileEditorRow {
 		})
 	}
 
-	upBtn := widget.NewButtonWithIcon("", theme.MoveUpIcon(), func() { p.moveBlock(i, i-1) })
-	upBtn.Importance = widget.LowImportance
-	if i == 0 {
-		upBtn.Disable()
-	}
-	downBtn := widget.NewButtonWithIcon("", theme.MoveDownIcon(), func() { p.moveBlock(i, i+1) })
-	downBtn.Importance = widget.LowImportance
-	if i == len(tab.Prompts)-1 {
-		downBtn.Disable()
-	}
-	dupBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() { p.duplicateBlock(i) })
-	dupBtn.Importance = widget.LowImportance
-	delBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() { p.removeBlock(i) })
-	delBtn.Importance = widget.LowImportance
-	if len(tab.Prompts) <= 1 {
-		delBtn.Disable()
-	}
+	// 区块操作收进「⋯」菜单：手机上一排 4 个图标按钮（上移/下移/复制/删除）
+	// 既挤又容易误触删除。⋯ 按钮带文字提示，点击面积更大。
+	var actions *widget.Button
+	actions = widget.NewButtonWithIcon("操作", theme.MoreHorizontalIcon(), func() {
+		p.showRowMenu(i, len(tab.Prompts), actions)
+	})
+	actions.Importance = widget.LowImportance
 
 	header := container.NewBorder(nil, nil, nameEntry,
-		container.NewHBox(upBtn, downBtn, dupBtn, delBtn), nil)
+		container.NewHBox(actions), nil)
 
 	promptOn := widget.NewCheck("提示词", nil)
 	promptOn.SetChecked(tab.Prompts[i].Enabled)
@@ -467,6 +464,57 @@ func (p *editorPage) copyResult() {
 		app.Clipboard().SetContent(text)
 	}
 	p.status.SetText("已复制到剪贴板")
+}
+
+// showPageSettings 弹出「页面设置」面板：标签名、拼接模式、自定义分隔符。
+//
+// 这些是低频设置，放在顶部工具栏会长期占掉两行高度；
+// 收进面板后编辑页首屏只留标签切换与主操作。
+func (p *editorPage) showPageSettings() {
+	if p.win == nil {
+		return
+	}
+	content := container.NewVBox(
+		widget.NewLabelWithStyle("标签名", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		p.nameEntry,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("拼接模式", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		p.modeSel,
+		p.sepWrap,
+		container.NewPadded(widget.NewLabelWithStyle(
+			"提示：区块右上角的 ⋯ 可以上移 / 下移 / 复制 / 删除；长按区块也能打开同一菜单。",
+			fyne.TextAlignLeading, fyne.TextStyle{Italic: true},
+		)),
+	)
+	dialog.ShowCustom("页面设置", "完成", content, p.win)
+}
+
+// showRowMenu 弹出第 i 个区块的操作菜单。
+//
+// 手机上不再在标题行平铺四个图标按钮（上移 / 下移 / 复制 / 删除），
+// 改为一个带文字的「⋯ 操作」按钮，误触删除的风险更低。
+func (p *editorPage) showRowMenu(i, total int, anchor fyne.CanvasObject) {
+	if p.win == nil {
+		return
+	}
+	up := fyne.NewMenuItem("上移", func() { p.moveBlock(i, i-1) })
+	up.Disabled = i <= 0
+	down := fyne.NewMenuItem("下移", func() { p.moveBlock(i, i+1) })
+	down.Disabled = i >= total-1
+	dup := fyne.NewMenuItem("复制本区块", func() { p.duplicateBlock(i) })
+	del := fyne.NewMenuItem("删除本区块", func() { p.removeBlock(i) })
+	del.Disabled = total <= 1
+
+	menu := fyne.NewMenu("", up, down, fyne.NewMenuItemSeparator(), dup, del)
+	pop := widget.NewPopUpMenu(menu, p.win.Canvas())
+	pop.Resize(pop.MinSize())
+	pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor)
+	// 贴在按钮下方；贴不下就从按钮上方弹出。
+	below := pos.AddXY(0, anchor.Size().Height)
+	if below.Y+pop.MinSize().Height > p.win.Canvas().Size().Height {
+		below = fyne.NewPos(pos.X, pos.Y-pop.MinSize().Height)
+	}
+	pop.ShowAtPosition(below)
 }
 
 // showTemplates 是手机端模板面板：应用/保存当前。

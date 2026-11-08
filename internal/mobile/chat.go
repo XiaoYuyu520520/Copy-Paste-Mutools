@@ -82,14 +82,16 @@ func newChatPage(s *store, win fyne.Window) *chatPage {
 		p.refreshSessions()
 	}
 
-	newBtn := widget.NewButtonWithIcon("", theme.ContentAddIcon(), p.newSession)
-	renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), p.renameSession)
-	pinBtn := widget.NewButtonWithIcon("", theme.ContentPasteIcon(), p.togglePin)
-	clearBtn := widget.NewButtonWithIcon("", theme.ContentClearIcon(), p.clear)
-	delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), p.deleteSession)
+	// 会话管理收进「⋯」菜单：新建 / 重命名 / 置顶 / 清空 / 删除
+	// 五个图标按钮平铺在标题栏上太挤，也容易误触删除。
+	var menuBtn *widget.Button
+	menuBtn = widget.NewButtonWithIcon("", theme.MoreHorizontalIcon(), func() {
+		p.showSessionMenu(menuBtn)
+	})
+	menuBtn.Importance = widget.LowImportance
 	top := container.NewBorder(nil, nil,
-		widget.NewLabel("AI 对话"),
-		container.NewHBox(newBtn, renameBtn, pinBtn, clearBtn, delBtn),
+		widget.NewLabelWithStyle("AI 对话", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewHBox(menuBtn),
 		p.sessionSel,
 	)
 
@@ -99,6 +101,51 @@ func newChatPage(s *store, win fyne.Window) *chatPage {
 	p.loadActive()
 	p.refreshSessions()
 	return p
+}
+
+// showSessionMenu 弹出会话管理菜单。
+func (p *chatPage) showSessionMenu(anchor fyne.CanvasObject) {
+	if p.win == nil {
+		return
+	}
+	pinned := p.isPinned()
+	pinLabel := "置顶会话"
+	if pinned {
+		pinLabel = "取消置顶"
+	}
+	menu := fyne.NewMenu("",
+		fyne.NewMenuItem("新建会话", p.newSession),
+		fyne.NewMenuItem("重命名会话", p.renameSession),
+		fyne.NewMenuItem(pinLabel, p.togglePin),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("清空当前会话", p.clear),
+		fyne.NewMenuItem("删除当前会话", p.deleteSession),
+	)
+	pop := widget.NewPopUpMenu(menu, p.win.Canvas())
+	pop.Resize(pop.MinSize())
+	pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor)
+	below := pos.AddXY(0, anchor.Size().Height)
+	if below.Y+pop.MinSize().Height > p.win.Canvas().Size().Height {
+		below = fyne.NewPos(pos.X, pos.Y-pop.MinSize().Height)
+	}
+	pop.ShowAtPosition(below)
+}
+
+// isPinned 返回当前会话是否已置顶。
+func (p *chatPage) isPinned() bool {
+	p.mu.Lock()
+	id := p.sessionID
+	p.mu.Unlock()
+	if id == "" {
+		return false
+	}
+	list, _ := p.sessions.SearchSessions(p.filter)
+	for _, s := range list {
+		if s.ID == id {
+			return s.Pinned
+		}
+	}
+	return false
 }
 
 // refreshSessions 重建会话下拉框。

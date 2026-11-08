@@ -25,6 +25,7 @@ internal/
 ├── data/      # 纯逻辑：拼接规则、配置/模板/历史读写（原子写盘）、目录树。改动优先写单测
 ├── ai/        # 统一 OpenAI 兼容流式客户端（SSE 解析）。桌面 chat 与 Android mobile 共用
 ├── chat/      # 桌面端 AI 聊天页
+├── theme/     # 桌面端与 Android 共用的调色板与 Fyne 主题（两端观感一致）
 ├── ui/        # 桌面端 Fyne 界面层（体量最大）
 ├── mobile/    # Android 界面层 + 本地存储
 ├── render/    # Markdown / PGM 地图渲染服务（Go 原始字符串页面 + 内嵌 JSON + 本地 HTTP）
