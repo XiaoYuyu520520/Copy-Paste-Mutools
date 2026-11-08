@@ -74,6 +74,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # 内联脚本语法检查需要 node；runner 自带的版本也可用，
+      # 这里显式固定一个主版本，避免依赖镜像预装内容。
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Install Playwright
         run: |
           python -m pip install --upgrade pip

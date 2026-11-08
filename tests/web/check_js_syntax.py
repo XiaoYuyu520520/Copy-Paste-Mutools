@@ -4,19 +4,41 @@
   - .html：提取全部内联 <script> 块分别检查
   - .js  ：直接检查
 
-需要 Node.js（默认找 C:/Program Files/nodejs/node.exe，可用 NODE 环境变量覆盖）。
-本地没有 node 时以退出码 2 报告「跳过」，方便在没有 Node 的机器上运行其它检查。
+需要 Node.js：依次查找 NODE 环境变量、PATH 里的 node、常见安装目录。
+本地没有 node 时跳过（退出码 0），方便在没有 Node 的机器上运行其它检查。
 """
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-NODE = os.environ.get("NODE") or r"C:\Program Files\nodejs\node.exe"
 ROOT = Path(__file__).resolve().parents[2] / "docs" / "tools"
+
+
+def _node() -> str | None:
+    """查找 node：优先 NODE 环境变量，其次 PATH，最后 Windows 默认安装目录。"""
+    env = os.environ.get("NODE")
+    if env and os.path.exists(env):
+        return env
+    for name in ("node", "nodejs"):
+        p = shutil.which(name)
+        if p:
+            return p
+    for cand in (
+        r"C:\Program Files\nodejs\node.exe",
+        "/usr/local/bin/node",
+        "/usr/bin/node",
+    ):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+NODE = _node()
 
 SCRIPT_RE = re.compile(r"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
 
@@ -56,9 +78,11 @@ def check(path: Path) -> bool:
 
 
 def main(argv: list[str]) -> int:
-    if not os.path.exists(NODE):
-        print(f"未找到 Node.js（{NODE}），跳过语法检查", file=sys.stderr)
-        return 2
+    if not NODE:
+        # 没有 node 时跳过而不是失败：这个检查只是快速旁路，
+        # Playwright 用例仍会加载页面并捕获 JS 错误。
+        print("未找到 Node.js，跳过语法检查", file=sys.stderr)
+        return 0
     targets = [Path(a) for a in argv] or sorted(
         p for p in ROOT.iterdir() if p.suffix in (".html", ".js")
     )
